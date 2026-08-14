@@ -98,13 +98,14 @@ export async function GET(req: Request) {
   const studentName = user.name ?? "Student";
   const isPremiumSubscriber = await hasGlobalPremiumAccess(userId);
 
-  const profile = await prisma.studentProfile.findUnique({
+  const paperExamDates = await prisma.studentPaperExamDate.findMany({
     where: { userId },
-    select: { targetExamDate: true },
+    select: { paperId: true, examDate: true },
   });
-  const targetExamDate = profile?.targetExamDate
-    ? profile.targetExamDate.toISOString().slice(0, 10)
-    : null;
+  const examDatesByPaperId: Record<string, string> = {};
+  for (const row of paperExamDates) {
+    examDatesByPaperId[row.paperId] = row.examDate.toISOString().slice(0, 10);
+  }
 
   const url = new URL(req.url);
   const requestedPaperId = url.searchParams.get("paperId")?.trim() || null;
@@ -549,9 +550,14 @@ export async function GET(req: Request) {
   const onTheWayCount = categoryCoverage.filter((c) => c.status === "on_the_way").length;
   const notStartedCount = categoryCoverage.filter((c) => c.status === "not_started").length;
 
+  const targetExamDate = selectedPaperId
+    ? examDatesByPaperId[selectedPaperId] ?? null
+    : null;
+
   return NextResponse.json({
     studentName,
     targetExamDate,
+    examDatesByPaperId,
     selectedPaperId,
     selectedPaper,
     filterPapers,

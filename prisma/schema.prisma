@@ -168,6 +168,7 @@ model User {
   // Student domain data
   attempts      QuizAttempt[]
   profile       StudentProfile?
+  paperExamDates StudentPaperExamDate[]
 
   // Partner / Lecturer portal
   partnerMemberships PartnerMember[]
@@ -213,9 +214,25 @@ model StudentProfile {
   userId      String   @unique
   user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   bio         String?
+  /// Legacy whole-account exam date. Prefer StudentPaperExamDate per paper.
   targetExamDate DateTime?
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
+}
+
+model StudentPaperExamDate {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  paperId   String
+  paper     Paper    @relation(fields: [paperId], references: [id], onDelete: Cascade)
+  examDate  DateTime
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([userId, paperId])
+  @@index([userId])
+  @@index([paperId])
 }
 
 // Verification + password reset tokens (Resend-ready: token is emailed,
@@ -295,6 +312,7 @@ model Paper {
   purchases   Purchase[]
   products    Product[]
   userAccess  UserAccess[]
+  studentExamDates StudentPaperExamDate[]
 
   @@index([partId])
 }
@@ -730,7 +748,7 @@ model PlatformSettings {
   enableMockExamPurchases      Boolean  @default(true)
 
   senderName                   String   @default("InsightApex")
-  senderEmail                  String   @default("onboarding@resend.dev")
+  senderEmail                  String   @default("noreply@insightapex.co.uk")
   enableVerificationEmails     Boolean  @default(true)
   enableResetPasswordEmails    Boolean  @default(true)
 

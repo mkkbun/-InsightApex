@@ -238,7 +238,7 @@ insightapex/
 | `NEXTAUTH_URL` | Yes | Base URL for Auth.js |
 | `NEXT_PUBLIC_APP_URL` | Yes | Public app URL (emails, redirects) |
 | `RESEND_API_KEY` | No | Transactional email |
-| `EMAIL_FROM` | No | From address |
+| `EMAIL_FROM` | No | From address (use verified domain, e.g. `InsightApex <noreply@insightapex.co.uk>`) |
 | `STRIPE_SECRET_KEY` | No* | Stripe secret (*needed for payments) |
 | `STRIPE_WEBHOOK_SECRET` | No* | Stripe webhooks |
 | `NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY` | No* | Stripe.js |

@@ -99,7 +99,12 @@ export async function POST(req: NextRequest) {
         newCount: summary.newQuestions,
         updateCount: summary.existingToUpdate,
         errorReport: summary.rows as object,
-        previewPayload: { rawRows, validRows } as object,
+        previewPayload: {
+          rawRows,
+          validRows,
+          duplicateInFileCount: summary.duplicateRows,
+          duplicateExistingCount: summary.duplicateExistingRows,
+        } as object,
       },
     });
 

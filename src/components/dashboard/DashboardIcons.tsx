@@ -147,32 +147,3 @@ export function IconStreak({ className }: { className?: string }) {
     </svg>
   );
 }
-
-export function MountainIllustration() {
-  return (
-    <svg viewBox="0 0 200 120" className="h-full w-full" fill="none" aria-hidden>
-      <path
-        d="M20 100 L70 35 L95 65 L130 20 L180 100 Z"
-        fill="rgba(255,255,255,0.12)"
-        stroke="rgba(255,255,255,0.35)"
-        strokeWidth="1.5"
-        strokeLinejoin="round"
-      />
-      <path
-        d="M130 20 L145 40 L130 55 L115 40 Z"
-        fill="rgba(255,255,255,0.25)"
-        stroke="rgba(255,255,255,0.5)"
-        strokeWidth="1"
-      />
-      <circle cx="145" cy="28" r="3" fill="#fbbf24" />
-      <path
-        d="M40 100 Q80 85 120 100 T200 100"
-        stroke="rgba(255,255,255,0.2)"
-        strokeWidth="1.5"
-        strokeDasharray="4 4"
-        fill="none"
-      />
-      <path d="M55 100 L75 70 L90 100" fill="rgba(255,255,255,0.08)" />
-    </svg>
-  );
-}

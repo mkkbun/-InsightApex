@@ -256,6 +256,12 @@ export default function QuestionImportPage() {
                 <Stat label="Valid rows" value={String(preview.validRows)} />
                 <Stat label="Invalid rows" value={String(preview.invalidRows)} />
                 <Stat label="New questions" value={String(preview.newQuestions)} />
+                <Stat
+                  label="Duplicates (total)"
+                  value={String(
+                    (preview.duplicateRows ?? 0) + (preview.duplicateExistingRows ?? 0)
+                  )}
+                />
                 <Stat label="Duplicates in file" value={String(preview.duplicateRows)} />
                 <Stat
                   label="Already in system"
@@ -363,8 +369,10 @@ export default function QuestionImportPage() {
                             {r.status === "valid"
                               ? r.action ?? "valid"
                               : r.status === "duplicate_existing"
-                                ? "already exists"
-                                : r.status.replace(/_/g, " ")}
+                                ? "DUPLICATE · already exists"
+                                : r.status === "duplicate_in_file"
+                                  ? "DUPLICATE · in file"
+                                  : r.status.replace(/_/g, " ")}
                           </Badge>
                         </TableCell>
                         <TableCell className="max-w-xs text-xs text-red-600">

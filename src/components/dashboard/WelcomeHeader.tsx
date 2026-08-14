@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { MountainIllustration } from "@/components/dashboard/DashboardIcons";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
 import { Modal } from "@/components/ui/Modal";
@@ -9,6 +8,9 @@ import { Modal } from "@/components/ui/Modal";
 interface WelcomeHeaderProps {
   studentName: string;
   hasAttempts: boolean;
+  paperId?: string | null;
+  paperCode?: string | null;
+  paperTitle?: string | null;
   targetExamDate?: string | null;
   onExamDateChange?: (date: string | null) => void;
 }
@@ -102,24 +104,35 @@ function CountdownUnit({ value, label }: { value: number; label: string }) {
 export function WelcomeHeader({
   studentName,
   hasAttempts,
+  paperId = null,
+  paperCode = null,
+  paperTitle = null,
   targetExamDate = null,
   onExamDateChange,
 }: WelcomeHeaderProps) {
   const firstName = studentName.split(" ")[0];
-  const countdown = useExamCountdown(targetExamDate);
+  const countdown = useExamCountdown(paperId ? targetExamDate : null);
   const [modalOpen, setModalOpen] = useState(false);
   const [draftDate, setDraftDate] = useState(targetExamDate ?? "");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    if (modalOpen) {
-      setDraftDate(targetExamDate ?? "");
-      setError(null);
-    }
-  }, [modalOpen, targetExamDate]);
+    setDraftDate(targetExamDate ?? "");
+    setError(null);
+  }, [paperId, targetExamDate]);
+
+  const paperLabel = paperCode
+    ? paperTitle
+      ? `${paperCode} – ${paperTitle}`
+      : paperCode
+    : null;
 
   async function saveExamDate(next: string | null) {
+    if (!paperId) {
+      setError("Select a paper first, then set that paper’s exam day.");
+      return;
+    }
     setSaving(true);
     setError(null);
     try {
@@ -127,7 +140,7 @@ export function WelcomeHeader({
         method: "POST",
         headers: { "Content-Type": "application/json" },
         credentials: "same-origin",
-        body: JSON.stringify({ targetExamDate: next }),
+        body: JSON.stringify({ paperId, targetExamDate: next }),
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
@@ -153,9 +166,6 @@ export function WelcomeHeader({
   return (
     <>
       <div className="relative overflow-hidden rounded-2xl bg-gradient-brand px-5 py-4 shadow-panel sm:px-6 sm:py-5">
-        <div className="pointer-events-none absolute -right-4 top-0 hidden h-full w-40 opacity-70 sm:block md:w-48">
-          <MountainIllustration />
-        </div>
         <div className="pointer-events-none absolute -left-10 -top-10 h-32 w-32 rounded-full bg-white/10 blur-2xl" />
         <div className="pointer-events-none absolute -bottom-10 right-1/4 h-24 w-24 rounded-full bg-accent-400/20 blur-2xl" />
 
@@ -174,9 +184,10 @@ export function WelcomeHeader({
               <button
                 type="button"
                 onClick={() => setModalOpen(true)}
-                className="mt-2 text-sm font-medium text-white/80 underline-offset-4 transition-colors hover:text-white hover:underline"
+                disabled={!paperId}
+                className="mt-2 text-sm font-medium text-white/80 underline-offset-4 transition-colors hover:text-white hover:underline disabled:cursor-not-allowed disabled:no-underline disabled:opacity-60"
               >
-                Set your exam day
+                {paperCode ? `Set Exam Date (${paperCode})` : "Set Exam Date"}
               </button>
             )}
           </div>
@@ -186,7 +197,7 @@ export function WelcomeHeader({
               <div className="flex items-start justify-between gap-3">
                 <div>
                   <p className="text-[10px] font-semibold uppercase tracking-wide text-white/70">
-                    Exam countdown
+                    {paperCode ? `${paperCode} exam countdown` : "Exam countdown"}
                   </p>
                   <p className="mt-0.5 text-xs text-white/90 sm:text-sm">{countdown.label}</p>
                 </div>
@@ -223,10 +234,17 @@ export function WelcomeHeader({
         </div>
       </div>
 
-      <Modal open={modalOpen} onClose={() => !saving && setModalOpen(false)} title="Exam day" size="sm">
+      <Modal
+        open={modalOpen}
+        onClose={() => !saving && setModalOpen(false)}
+        title={paperCode ? `${paperCode} exam day` : "Exam day"}
+        size="sm"
+      >
         <div className="space-y-4">
           <p className="text-sm text-slate-500">
-            Pick your ACCA exam date and we&apos;ll show a countdown on your dashboard.
+            {paperLabel
+              ? `Pick your ${paperLabel} exam date. Switching papers later will show that paper’s own countdown.`
+              : "Select a paper first, then pick its exam date."}
           </p>
           <Input
             id="target-exam-date"
@@ -257,7 +275,7 @@ export function WelcomeHeader({
             </Button>
             <Button
               type="button"
-              disabled={saving || !draftDate}
+              disabled={saving || !draftDate || !paperId}
               onClick={() => void saveExamDate(draftDate || null)}
             >
               {saving ? "Saving…" : "Save exam day"}

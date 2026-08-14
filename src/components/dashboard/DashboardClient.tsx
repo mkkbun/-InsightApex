@@ -36,6 +36,17 @@ export default function DashboardClient() {
   const loadDashboard = useCallback(async (paperId: string | null) => {
     setLoading(true);
     setError(null);
+    setData((prev) => {
+      if (!prev || !paperId) return prev;
+      const nextPaper =
+        prev.filterPapers.find((paper) => paper.id === paperId) ?? prev.selectedPaper;
+      return {
+        ...prev,
+        selectedPaperId: paperId,
+        selectedPaper: nextPaper,
+        targetExamDate: prev.examDatesByPaperId?.[paperId] ?? null,
+      };
+    });
     try {
       const params = new URLSearchParams();
       if (paperId) params.set("paperId", paperId);
@@ -109,11 +120,32 @@ export default function DashboardClient() {
   return (
     <div className="space-y-8 animate-stagger">
       <WelcomeHeader
+        key={selectedPaperId ?? "no-paper"}
         studentName={data?.studentName ?? "Student"}
         hasAttempts={hasAttempts}
-        targetExamDate={data?.targetExamDate ?? null}
+        paperId={selectedPaperId}
+        paperCode={data?.selectedPaper?.code ?? null}
+        paperTitle={data?.selectedPaper?.title ?? null}
+        targetExamDate={
+          selectedPaperId
+            ? data?.examDatesByPaperId?.[selectedPaperId] ?? null
+            : null
+        }
         onExamDateChange={(date) =>
-          setData((prev) => (prev ? { ...prev, targetExamDate: date } : prev))
+          setData((prev) => {
+            if (!prev) return prev;
+            const paperId = prev.selectedPaperId;
+            const nextDates = { ...(prev.examDatesByPaperId ?? {}) };
+            if (paperId) {
+              if (date) nextDates[paperId] = date;
+              else delete nextDates[paperId];
+            }
+            return {
+              ...prev,
+              targetExamDate: date,
+              examDatesByPaperId: nextDates,
+            };
+          })
         }
       />
 

@@ -8,7 +8,7 @@ export type EmailConfig = {
 export function getEmailConfig(): EmailConfig {
   const resendApiKey = process.env.RESEND_API_KEY?.trim() || null;
   const emailFrom =
-    process.env.EMAIL_FROM?.trim() || "InsightApex <onboarding@resend.dev>";
+    process.env.EMAIL_FROM?.trim() || "InsightApex <noreply@insightapex.co.uk>";
   const appUrl =
     process.env.NEXT_PUBLIC_APP_URL?.trim() ||
     process.env.NEXTAUTH_URL?.trim() ||

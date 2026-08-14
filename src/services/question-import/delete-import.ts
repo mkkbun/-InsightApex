@@ -3,7 +3,7 @@
  */
 
 import { prisma } from "@/lib/prisma";
-import type { ValidatedImportRow } from "./types";
+import { resolveBatchExternalIds } from "./batch-external-ids";
 
 export type DeleteImportMode = "created" | "all";
 
@@ -14,47 +14,6 @@ export type DeleteImportResult = {
   mode: DeleteImportMode;
   status: "CANCELLED";
 };
-
-function asStringArray(value: unknown): string[] {
-  if (!Array.isArray(value)) return [];
-  return value.filter((v): v is string => typeof v === "string" && v.trim().length > 0);
-}
-
-function resolveExternalIds(
-  payload: Record<string, unknown> | null,
-  mode: DeleteImportMode
-): string[] {
-  if (!payload) return [];
-
-  const created = asStringArray(payload.createdExternalIds);
-  const updated = asStringArray(payload.updatedExternalIds);
-
-  if (created.length || updated.length) {
-    if (mode === "created") return [...new Set(created)];
-    return [...new Set([...created, ...updated])];
-  }
-
-  // Fallback for older batches: use validated preview rows
-  const validRows = Array.isArray(payload.validRows)
-    ? (payload.validRows as ValidatedImportRow[])
-    : [];
-  const fromPreview = validRows
-    .map((row) => row.externalQuestionId)
-    .filter((id): id is string => Boolean(id));
-
-  if (mode === "created") {
-    return [
-      ...new Set(
-        validRows
-          .filter((row) => row.action === "CREATE" || !row.existingQuestionId)
-          .map((row) => row.externalQuestionId)
-          .filter(Boolean)
-      ),
-    ];
-  }
-
-  return [...new Set(fromPreview)];
-}
 
 export async function deleteImportBatchQuestions(params: {
   batchId: string;
@@ -77,7 +36,7 @@ export async function deleteImportBatchQuestions(params: {
       ? (batch.previewPayload as Record<string, unknown>)
       : null;
 
-  const externalIds = resolveExternalIds(payload, params.mode);
+  const externalIds = resolveBatchExternalIds(payload, params.mode);
   if (externalIds.length === 0) {
     throw new Error(
       "No Excel question IDs were recorded for this import. Delete questions individually from Practice Questions."
@@ -121,10 +80,20 @@ export async function deleteImportBatchQuestions(params: {
           deleteMode: params.mode,
           deletedExternalIds,
           deletedCount: questionIds.length,
+          questionsActive: false,
         } as object,
         errorReport: {
           note: `Import deleted (${params.mode}). Removed ${questionIds.length} question(s).`,
           deletedExternalIds,
+          // Preserve duplicate counts from before delete for history display
+          duplicateInFileCount:
+            typeof prev.duplicateInFileCount === "number"
+              ? prev.duplicateInFileCount
+              : batch.duplicateInFileCount,
+          duplicateExistingCount:
+            typeof prev.duplicateExistingCount === "number"
+              ? prev.duplicateExistingCount
+              : 0,
         } as object,
       },
     });

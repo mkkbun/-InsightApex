@@ -158,6 +158,7 @@ export interface DashboardCategoryCoverage {
 export interface DashboardOverview {
   studentName: string;
   targetExamDate: string | null;
+  examDatesByPaperId: Record<string, string>;
   selectedPaperId: string | null;
   selectedPaper: DashboardFilterPaper | null;
   filterPapers: DashboardFilterPaper[];

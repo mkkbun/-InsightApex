@@ -12,6 +12,7 @@ export const ADMIN_AUDIT_ACTIONS = {
   QUESTION_IMPORT_PREVIEW: "QUESTION_IMPORT_PREVIEW",
   QUESTION_IMPORT_CONFIRM: "QUESTION_IMPORT_CONFIRM",
   QUESTION_IMPORT_DELETED: "QUESTION_IMPORT_DELETED",
+  QUESTION_IMPORT_ACTIVE: "QUESTION_IMPORT_ACTIVE",
 } as const;
 
 export type AdminAuditAction =
@@ -30,4 +31,5 @@ export const ADMIN_AUDIT_ACTION_LABELS: Record<string, string> = {
   QUESTION_IMPORT_PREVIEW: "Question import preview",
   QUESTION_IMPORT_CONFIRM: "Question import confirmed",
   QUESTION_IMPORT_DELETED: "Question import deleted",
+  QUESTION_IMPORT_ACTIVE: "Question import activate/deactivate",
 };

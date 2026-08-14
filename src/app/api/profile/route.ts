@@ -4,6 +4,7 @@ import { requireAuthApi } from "@/lib/admin-auth";
 import { prisma } from "@/lib/prisma";
 
 const updateSchema = z.object({
+  paperId: z.string().min(1, "Select a paper first"),
   targetExamDate: z.union([
     z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Use YYYY-MM-DD"),
     z.null(),
@@ -16,43 +17,40 @@ function parseDateOnly(iso: string): Date {
   return new Date(Date.UTC(y, m - 1, d, 12, 0, 0));
 }
 
-function serializeExamDate(value: Date | null) {
+function serializeExamDate(value: Date | null | undefined) {
   return value ? value.toISOString().slice(0, 10) : null;
 }
 
-async function upsertExamDate(userId: string, targetExamDate: string | null) {
-  const dateValue = targetExamDate ? parseDateOnly(targetExamDate) : null;
-  const existing = await prisma.studentProfile.findUnique({
-    where: { userId },
-    select: { id: true },
+async function examDateForPaper(userId: string, paperId: string) {
+  const row = await prisma.studentPaperExamDate.findUnique({
+    where: { userId_paperId: { userId, paperId } },
+    select: { examDate: true },
   });
 
-  if (existing) {
-    return prisma.studentProfile.update({
-      where: { userId },
-      data: { targetExamDate: dateValue },
-      select: { targetExamDate: true },
-    });
-  }
-
-  return prisma.studentProfile.create({
-    data: { userId, targetExamDate: dateValue },
-    select: { targetExamDate: true },
-  });
+  return serializeExamDate(row?.examDate ?? null);
 }
 
-export async function GET() {
+export async function GET(req: Request) {
   const user = await requireAuthApi();
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
+  const paperId = new URL(req.url).searchParams.get("paperId")?.trim() || null;
+  if (!paperId) {
+    return NextResponse.json({ error: "paperId is required" }, { status: 400 });
+  }
+
   try {
-    const profile = await prisma.studentProfile.findUnique({
-      where: { userId: user.id },
-      select: { targetExamDate: true },
+    const paper = await prisma.paper.findFirst({
+      where: { id: paperId, isActive: true },
+      select: { id: true },
     });
+    if (!paper) {
+      return NextResponse.json({ error: "Paper not found" }, { status: 404 });
+    }
 
     return NextResponse.json({
-      targetExamDate: serializeExamDate(profile?.targetExamDate ?? null),
+      paperId,
+      targetExamDate: await examDateForPaper(user.id, paperId),
     });
   } catch (error) {
     console.error("[api/profile GET]", error);
@@ -74,9 +72,36 @@ export async function POST(req: Request) {
       );
     }
 
-    const profile = await upsertExamDate(user.id, parsed.data.targetExamDate);
+    const { paperId, targetExamDate } = parsed.data;
+    const paper = await prisma.paper.findFirst({
+      where: { id: paperId, isActive: true },
+      select: { id: true },
+    });
+    if (!paper) {
+      return NextResponse.json({ error: "Paper not found" }, { status: 404 });
+    }
+
+    if (targetExamDate) {
+      await prisma.studentPaperExamDate.upsert({
+        where: { userId_paperId: { userId: user.id, paperId } },
+        create: {
+          userId: user.id,
+          paperId,
+          examDate: parseDateOnly(targetExamDate),
+        },
+        update: {
+          examDate: parseDateOnly(targetExamDate),
+        },
+      });
+    } else {
+      await prisma.studentPaperExamDate.deleteMany({
+        where: { userId: user.id, paperId },
+      });
+    }
+
     return NextResponse.json({
-      targetExamDate: serializeExamDate(profile.targetExamDate),
+      paperId,
+      targetExamDate,
     });
   } catch (error) {
     console.error("[api/profile POST]", error);
