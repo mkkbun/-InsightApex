@@ -2,11 +2,8 @@ import { NextResponse } from "next/server";
 import { requireAuthApi } from "@/lib/admin-auth";
 import { prisma } from "@/lib/prisma";
 import { timeAsync, timedRoute } from "@/lib/perf-timing";
-import {
-  getQuestionCounts,
-  hasGlobalPremiumAccess,
-  hasPremiumQuestionAccess,
-} from "@/services/access-control";
+import { buildAccessibleCount } from "@/lib/question-access";
+import { hasGlobalPremiumAccess } from "@/services/access-control";
 import {
   buildSyllabus,
   computeContinueLearning,
@@ -111,25 +108,89 @@ export const GET = timedRoute("GET /api/dashboard", async (req: Request) => {
     examDatesByPaperId[row.paperId] = row.examDate.toISOString().slice(0, 10);
   }
 
-  const paperAccess = await timeAsync(`dashboard paperAccess loop (${papers.length} papers)`, () =>
-    Promise.all(
-      papers.map(async (p) => {
-        const hasPremiumAccess =
-          isPremiumSubscriber || (await hasPremiumQuestionAccess(userId, p.id));
-        const counts = await getQuestionCounts(
-          { subCategory: { category: { paperId: p.id } } },
-          hasPremiumAccess
-        );
+  const paperAccess = await timeAsync(
+    `dashboard paperAccess loop (${papers.length} papers)`,
+    async () => {
+      const now = new Date();
+      const [accessRows, purchaseRows, questionRows] = await Promise.all([
+        isPremiumSubscriber
+          ? Promise.resolve([] as { paperId: string | null }[])
+          : prisma.userAccess.findMany({
+              where: {
+                userId,
+                status: "ACTIVE",
+                paperId: { not: null },
+                OR: [{ endsAt: null }, { endsAt: { gt: now } }],
+              },
+              select: { paperId: true },
+            }),
+        isPremiumSubscriber
+          ? Promise.resolve([] as { paperId: string | null }[])
+          : prisma.purchase.findMany({
+              where: { userId, status: "COMPLETED", paperId: { not: null } },
+              select: { paperId: true },
+            }),
+        prisma.question.findMany({
+          where: {
+            isActive: true,
+            purpose: "PRACTICE",
+            subCategoryId: { not: null },
+          },
+          select: {
+            accessLevel: true,
+            subCategory: { select: { category: { select: { paperId: true } } } },
+          },
+        }),
+      ]);
+
+      const premiumPaperIds = new Set<string>();
+      for (const row of accessRows) {
+        if (row.paperId) premiumPaperIds.add(row.paperId);
+      }
+      for (const row of purchaseRows) {
+        if (row.paperId) premiumPaperIds.add(row.paperId);
+      }
+
+      const countsByPaper = new Map<
+        string,
+        { freeQuestionCount: number; premiumQuestionCount: number; totalQuestionCount: number }
+      >();
+      for (const row of questionRows) {
+        const paperId = row.subCategory?.category.paperId;
+        if (!paperId) continue;
+        let counts = countsByPaper.get(paperId);
+        if (!counts) {
+          counts = { freeQuestionCount: 0, premiumQuestionCount: 0, totalQuestionCount: 0 };
+          countsByPaper.set(paperId, counts);
+        }
+        counts.totalQuestionCount += 1;
+        if (row.accessLevel === "FREE_TRIAL") counts.freeQuestionCount += 1;
+        else if (row.accessLevel === "PREMIUM") counts.premiumQuestionCount += 1;
+      }
+
+      return papers.map((p) => {
+        const hasPremiumAccess = isPremiumSubscriber || premiumPaperIds.has(p.id);
+        const counts = countsByPaper.get(p.id) ?? {
+          freeQuestionCount: 0,
+          premiumQuestionCount: 0,
+          totalQuestionCount: 0,
+        };
         return {
           id: p.id,
           code: p.code,
           title: p.title,
           hasPremiumAccess,
           hasFreeTrialQuestions: counts.freeQuestionCount > 0,
-          accessibleQuestionCount: counts.accessibleQuestionCount,
+          accessibleQuestionCount: buildAccessibleCount(
+            {
+              freeQuestionCount: counts.freeQuestionCount,
+              totalQuestionCount: counts.totalQuestionCount,
+            },
+            hasPremiumAccess
+          ),
         };
-      })
-    )
+      });
+    }
   );
 
   const hasAnyPremiumAccess =
@@ -160,74 +221,110 @@ export const GET = timedRoute("GET /api/dashboard", async (req: Request) => {
     selectedPaperId = filterPapers[0].id;
   }
 
-  // All submitted attempts (for carousel coverage across papers) +
-  // unfinished practice — independent queries.
-  const [allAttempts, inProgressAttempts] = await timeAsync(
+  const submittedAttemptInclude = {
+    paper: { select: { id: true, code: true, title: true } },
+    responses: {
+      include: {
+        question: {
+          include: {
+            subCategory: {
+              select: {
+                id: true,
+                title: true,
+                order: true,
+                category: {
+                  select: { id: true, title: true, paperId: true, order: true },
+                },
+              },
+            },
+          },
+        },
+      },
+    },
+  } as const;
+
+  const otherAttemptsLeanSelect = {
+    id: true,
+    paperId: true,
+    scorePercent: true,
+    submittedAt: true,
+    mockExamId: true,
+    responses: {
+      select: {
+        isCorrect: true,
+        selectedOptionId: true,
+        selectedOptionIds: true,
+        answeredAt: true,
+        question: {
+          select: {
+            subCategoryId: true,
+            // Tiny nested ids only — carousel continue* fields need categoryId.
+            subCategory: { select: { id: true, category: { select: { id: true } } } },
+          },
+        },
+      },
+    },
+  } as const;
+
+  // Selected-paper submitted attempts (full nested include) + other papers
+  // (lean) + unfinished practice. Same stage label as before for timings.
+  const [selectedPaperAttempts, otherAttemptsLean, inProgressAttempts] = await timeAsync(
     "dashboard attempts+inProgress",
     () =>
       Promise.all([
-    prisma.quizAttempt.findMany({
-      where: { userId, status: "SUBMITTED" },
-      include: {
-        paper: { select: { id: true, code: true, title: true } },
-        responses: {
+        selectedPaperId
+          ? prisma.quizAttempt.findMany({
+              where: { userId, status: "SUBMITTED", paperId: selectedPaperId },
+              include: submittedAttemptInclude,
+              orderBy: { submittedAt: "desc" },
+            })
+          : Promise.resolve([]),
+        prisma.quizAttempt.findMany({
+          where: {
+            userId,
+            status: "SUBMITTED",
+            ...(selectedPaperId ? { paperId: { not: selectedPaperId } } : {}),
+          },
+          select: otherAttemptsLeanSelect,
+          orderBy: { submittedAt: "desc" },
+        }),
+        prisma.quizAttempt.findMany({
+          where: {
+            userId,
+            status: "IN_PROGRESS",
+            mockExamId: null,
+            ...(selectedPaperId ? { paperId: selectedPaperId } : {}),
+          },
           include: {
-            question: {
+            responses: {
               include: {
-                subCategory: {
-                  select: {
-                    id: true,
-                    title: true,
-                    order: true,
-                    category: {
-                      select: { id: true, title: true, paperId: true, order: true },
+                question: {
+                  include: {
+                    subCategory: {
+                      select: {
+                        id: true,
+                        title: true,
+                        order: true,
+                        category: {
+                          select: { id: true, title: true, paperId: true, order: true },
+                        },
+                      },
                     },
                   },
                 },
               },
             },
           },
-        },
-      },
-      orderBy: { submittedAt: "desc" },
-    }),
-    prisma.quizAttempt.findMany({
-      where: {
-        userId,
-        status: "IN_PROGRESS",
-        mockExamId: null,
-        ...(selectedPaperId ? { paperId: selectedPaperId } : {}),
-      },
-      include: {
-        responses: {
-          include: {
-            question: {
-              include: {
-                subCategory: {
-                  select: {
-                    id: true,
-                    title: true,
-                    order: true,
-                    category: {
-                      select: { id: true, title: true, paperId: true, order: true },
-                    },
-                  },
-                },
-              },
-            },
-          },
-        },
-      },
-      orderBy: { startedAt: "desc" },
-      take: 20,
-    }),
+          orderBy: { startedAt: "desc" },
+          take: 20,
+        }),
       ])
   );
 
+  const allSubmittedAttempts = [...selectedPaperAttempts, ...otherAttemptsLean];
+
   // Scoped attempts for progress insights (always a single selected paper).
-  const scopedAttempts = selectedPaperId
-    ? allAttempts.filter((a) => a.paperId === selectedPaperId)
-    : [];
+  const scopedAttempts = selectedPaperAttempts;
 
   // Practice analytics only — mock exam attempts are tracked separately.
   const attempts = scopedAttempts.filter((a) => !a.mockExamId);
@@ -259,7 +356,7 @@ export const GET = timedRoute("GET /api/dashboard", async (req: Request) => {
 
   // Streak + heatmap track every practice day (all papers), even when answer
   // detail rows were removed — attempt summaries still have submittedAt.
-  const allPracticeSubmittedDates = allAttempts
+  const allPracticeSubmittedDates = allSubmittedAttempts
     .filter((a) => !a.mockExamId)
     .map((a) => a.submittedAt)
     .filter((d): d is Date => d !== null);
@@ -412,7 +509,21 @@ export const GET = timedRoute("GET /api/dashboard", async (req: Request) => {
     .filter((sc) => sc.status === "Weak")
     .slice(0, 5);
 
-  function buildPaperProgress(paperIds: Set<string>, sourceAttempts: typeof allAttempts) {
+  type PaperProgressAttempt = {
+    paperId: string;
+    submittedAt: Date | null;
+    scorePercent: number | null;
+    responses: Array<{
+      selectedOptionId: string | null;
+      selectedOptionIds: string[];
+      question: {
+        subCategoryId?: string | null;
+        subCategory?: { id: string; category: { id: string } } | null;
+      };
+    }>;
+  };
+
+  function buildPaperProgress(paperIds: Set<string>, sourceAttempts: PaperProgressAttempt[]) {
     return papers
       .filter((p) => paperIds.has(p.id))
       .map((p) => {
@@ -426,8 +537,9 @@ export const GET = timedRoute("GET /api/dashboard", async (req: Request) => {
             lastDate = attempt.submittedAt;
           }
           for (const resp of attempt.responses) {
-            if (!responseWasAnswered(resp) || !resp.question.subCategoryId) continue;
-            attemptedSubCats.add(resp.question.subCategoryId);
+            const subId = resp.question.subCategory?.id ?? resp.question.subCategoryId;
+            if (!responseWasAnswered(resp) || !subId) continue;
+            attemptedSubCats.add(subId);
           }
         }
 
@@ -454,9 +566,12 @@ export const GET = timedRoute("GET /api/dashboard", async (req: Request) => {
         let continueSubCategoryId: string | null = null;
         if (lastAttempt) {
           const lastAnswered = lastAttempt.responses.find((r) => responseWasAnswered(r));
-          if (lastAnswered?.question.subCategory) {
-            continueSubCategoryId = lastAnswered.question.subCategory.id;
-            continueCategoryId = lastAnswered.question.subCategory.category.id;
+          const sc = lastAnswered?.question.subCategory;
+          if (sc) {
+            continueSubCategoryId = sc.id;
+            continueCategoryId = sc.category.id;
+          } else if (lastAnswered?.question.subCategoryId) {
+            continueSubCategoryId = lastAnswered.question.subCategoryId;
           }
         }
 
@@ -484,7 +599,7 @@ export const GET = timedRoute("GET /api/dashboard", async (req: Request) => {
     attempts
   );
 
-  const carouselPapers = buildPaperProgress(allowedPaperIds, allAttempts).sort(
+  const carouselPapers = buildPaperProgress(allowedPaperIds, allSubmittedAttempts).sort(
     (a, b) => b.progressPercent - a.progressPercent
   );
 
@@ -796,7 +911,9 @@ export const GET = timedRoute("GET /api/dashboard", async (req: Request) => {
     ? examDatesByPaperId[selectedPaperId] ?? null
     : null;
 
-  function mapAttemptForLearning(attempt: (typeof allAttempts)[number] | (typeof inProgressAttempts)[number]) {
+  function mapAttemptForLearning(
+    attempt: (typeof selectedPaperAttempts)[number] | (typeof inProgressAttempts)[number]
+  ) {
     return {
       id: attempt.id,
       paperId: attempt.paperId,
@@ -827,9 +944,36 @@ export const GET = timedRoute("GET /api/dashboard", async (req: Request) => {
     };
   }
 
-  const submittedPracticeMapped = allAttempts
-    .filter((a) => !a.mockExamId)
-    .map(mapAttemptForLearning);
+  function mapLeanForDailyGoal(attempt: (typeof otherAttemptsLean)[number]) {
+    return {
+      id: attempt.id,
+      paperId: attempt.paperId,
+      status: "SUBMITTED" as const,
+      mockExamId: attempt.mockExamId,
+      startedAt: attempt.submittedAt ?? new Date(0),
+      submittedAt: attempt.submittedAt,
+      scorePercent: attempt.scorePercent,
+      responses: attempt.responses.map((resp) => ({
+        isCorrect: resp.isCorrect,
+        selectedOptionId: resp.selectedOptionId,
+        selectedOptionIds: resp.selectedOptionIds,
+        answeredAt: resp.answeredAt,
+        subCategory: resp.question.subCategoryId
+          ? {
+              id: resp.question.subCategoryId,
+              title: "",
+              order: 0,
+              category: { id: "", title: "", paperId: attempt.paperId, order: 0 },
+            }
+          : null,
+      })),
+    };
+  }
+
+  const submittedPracticeMapped = [
+    ...selectedPaperAttempts.filter((a) => !a.mockExamId).map(mapAttemptForLearning),
+    ...otherAttemptsLean.filter((a) => !a.mockExamId).map(mapLeanForDailyGoal),
+  ];
   const inProgressMapped = inProgressAttempts.map(mapAttemptForLearning);
 
   let continueLearning = null;

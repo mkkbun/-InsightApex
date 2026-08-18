@@ -286,6 +286,144 @@ async function main() {
     })
   );
 
+  const selectedPaperId = papers[0]?.id ?? null;
+  console.log("");
+  console.log("--- dashboard AFTER (batched paperAccess + split attempts) ---");
+  await timed("AFTER paperAccess batched (grants + question rows)", async () => {
+    const now = new Date();
+    await Promise.all([
+      prisma.userAccess.findMany({
+        where: {
+          userId,
+          status: "ACTIVE",
+          paperId: { not: null },
+          OR: [{ endsAt: null }, { endsAt: { gt: now } }],
+        },
+        select: { paperId: true },
+      }),
+      prisma.purchase.findMany({
+        where: { userId, status: "COMPLETED", paperId: { not: null } },
+        select: { paperId: true },
+      }),
+      prisma.question.findMany({
+        where: {
+          isActive: true,
+          purpose: "PRACTICE",
+          subCategoryId: { not: null },
+        },
+        select: {
+          accessLevel: true,
+          subCategory: { select: { category: { select: { paperId: true } } } },
+        },
+      }),
+    ]);
+  });
+  await timed(
+    "AFTER attempts+inProgress (selected full + others lean + inProgress)",
+    async () => {
+      await Promise.all([
+        selectedPaperId
+          ? prisma.quizAttempt.findMany({
+              where: { userId, status: "SUBMITTED", paperId: selectedPaperId },
+              include: {
+                paper: { select: { id: true, code: true, title: true } },
+                responses: {
+                  include: {
+                    question: {
+                      include: {
+                        subCategory: {
+                          select: {
+                            id: true,
+                            title: true,
+                            order: true,
+                            category: {
+                              select: {
+                                id: true,
+                                title: true,
+                                paperId: true,
+                                order: true,
+                              },
+                            },
+                          },
+                        },
+                      },
+                    },
+                  },
+                },
+              },
+              orderBy: { submittedAt: "desc" },
+            })
+          : Promise.resolve([]),
+        prisma.quizAttempt.findMany({
+          where: {
+            userId,
+            status: "SUBMITTED",
+            ...(selectedPaperId ? { paperId: { not: selectedPaperId } } : {}),
+          },
+          select: {
+            id: true,
+            paperId: true,
+            scorePercent: true,
+            submittedAt: true,
+            mockExamId: true,
+            responses: {
+              select: {
+                isCorrect: true,
+                selectedOptionId: true,
+                selectedOptionIds: true,
+                answeredAt: true,
+                question: {
+                  select: {
+                    subCategoryId: true,
+                    subCategory: {
+                      select: { id: true, category: { select: { id: true } } },
+                    },
+                  },
+                },
+              },
+            },
+          },
+          orderBy: { submittedAt: "desc" },
+        }),
+        prisma.quizAttempt.findMany({
+          where: {
+            userId,
+            status: "IN_PROGRESS",
+            mockExamId: null,
+            ...(selectedPaperId ? { paperId: selectedPaperId } : {}),
+          },
+          include: {
+            responses: {
+              include: {
+                question: {
+                  include: {
+                    subCategory: {
+                      select: {
+                        id: true,
+                        title: true,
+                        order: true,
+                        category: {
+                          select: {
+                            id: true,
+                            title: true,
+                            paperId: true,
+                            order: true,
+                          },
+                        },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          },
+          orderBy: { startedAt: "desc" },
+          take: 20,
+        }),
+      ]);
+    }
+  );
+
   console.log("");
   console.log("--- billing / profile / access ---");
   await timed("subscription.findFirst + plan", () =>
