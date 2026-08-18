@@ -15,22 +15,28 @@ export function DashboardShell({ userName, children }: DashboardShellProps) {
   const [sidebarExpanded, setSidebarExpanded] = useState(false);
   const [isPremium, setIsPremium] = useState(false);
   const [studyStreak, setStudyStreak] = useState(0);
+  const [studyActivity, setStudyActivity] = useState<{ date: string; count: number }[]>([]);
 
   useEffect(() => {
-    fetch("/api/billing/dashboard", { cache: "no-store" })
-      .then((r) => r.json())
-      .then((data) => {
-        const status = data.subscription?.status;
+    let cancelled = false;
+
+    // Lean parallel fetches — avoid loading full /api/dashboard twice.
+    void Promise.all([
+      fetch("/api/billing/dashboard", { cache: "no-store" }).then((r) => r.json()),
+      fetch("/api/dashboard/streak", { cache: "no-store" }).then((r) => r.json()),
+    ])
+      .then(([billing, streak]) => {
+        if (cancelled) return;
+        const status = billing.subscription?.status;
         setIsPremium(status === "ACTIVE" || status === "TRIALING");
+        setStudyStreak(streak.studyStreak ?? 0);
+        setStudyActivity(Array.isArray(streak.studyActivity) ? streak.studyActivity : []);
       })
       .catch(() => {});
-  }, []);
 
-  useEffect(() => {
-    fetch("/api/dashboard")
-      .then((r) => r.json())
-      .then((data) => setStudyStreak(data.studyStreak ?? 0))
-      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   return (
@@ -40,13 +46,14 @@ export function DashboardShell({ userName, children }: DashboardShellProps) {
         <div className="absolute -right-32 top-1/3 h-80 w-80 rounded-full bg-brand-200/20 blur-3xl" />
       </div>
 
-      {/* Full-width header — not shifted by sidebar */}
       <AppTopBar
         userName={userName}
         sidebarExpanded={sidebarExpanded}
         onToggleSidebar={() => setSidebarExpanded((v) => !v)}
         onMenuOpen={() => setMobileOpen(true)}
         studyStreak={studyStreak}
+        studyActivity={studyActivity}
+        isPremium={isPremium}
       />
 
       <FloatingNav
@@ -56,7 +63,6 @@ export function DashboardShell({ userName, children }: DashboardShellProps) {
         isPremium={isPremium}
       />
 
-      {/* Content — width of main column after sidebar; page container sets ~20% total side space */}
       <main
         className={cn(
           "relative min-w-0 transition-[padding-left] duration-300",

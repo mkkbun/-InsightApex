@@ -2,8 +2,9 @@ import { NextResponse } from "next/server";
 import { requireAuthApi } from "@/lib/admin-auth";
 import { prisma } from "@/lib/prisma";
 import { hasMockExamAccess } from "@/services/access-control";
+import { timeAsync, timedRoute } from "@/lib/perf-timing";
 
-export async function GET(req: Request) {
+export const GET = timedRoute("GET /api/mock-exams", async (req: Request) => {
   const user = await requireAuthApi();
   const url = new URL(req.url);
   const paperId = url.searchParams.get("paperId");
@@ -22,11 +23,13 @@ export async function GET(req: Request) {
   });
 
   const results = user
-    ? await Promise.all(
-        mockExams.map(async (m) => ({
-          exam: m,
-          hasAccess: await hasMockExamAccess(user.id, m.id),
-        }))
+    ? await timeAsync(`mock-exams hasAccess (${mockExams.length} exams)`, () =>
+        Promise.all(
+          mockExams.map(async (m) => ({
+            exam: m,
+            hasAccess: await hasMockExamAccess(user.id, m.id),
+          }))
+        )
       )
     : mockExams.map((m) => ({ exam: m, hasAccess: m.accessLevel === "FREE" && !m.isPremium }));
 
@@ -48,4 +51,4 @@ export async function GET(req: Request) {
       order: m.order,
     })),
   });
-}
+});

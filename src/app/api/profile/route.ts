@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { requireAuthApi } from "@/lib/admin-auth";
 import { prisma } from "@/lib/prisma";
+import { timedRoute } from "@/lib/perf-timing";
 
 const updateSchema = z.object({
   paperId: z.string().min(1, "Select a paper first"),
@@ -30,7 +31,7 @@ async function examDateForPaper(userId: string, paperId: string) {
   return serializeExamDate(row?.examDate ?? null);
 }
 
-export async function GET(req: Request) {
+export const GET = timedRoute("GET /api/profile", async (req: Request) => {
   const user = await requireAuthApi();
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
@@ -56,7 +57,7 @@ export async function GET(req: Request) {
     console.error("[api/profile GET]", error);
     return NextResponse.json({ error: "Could not load profile." }, { status: 500 });
   }
-}
+});
 
 export async function POST(req: Request) {
   const user = await requireAuthApi();

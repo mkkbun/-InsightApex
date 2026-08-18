@@ -1,11 +1,23 @@
 import { NextResponse } from "next/server";
 import { requireAuthApi } from "@/lib/admin-auth";
 import { prisma } from "@/lib/prisma";
+import { timeAsync, timedRoute } from "@/lib/perf-timing";
 import {
   getQuestionCounts,
   hasGlobalPremiumAccess,
   hasPremiumQuestionAccess,
 } from "@/services/access-control";
+import {
+  buildSyllabus,
+  computeContinueLearning,
+  computeDailyGoal,
+  getLocalDayBounds,
+  toLocalDateKey,
+} from "@/services/dashboard/continue-and-daily-goal";
+import {
+  buildStudyActivityHeatmap,
+  computeStudyStreak,
+} from "@/services/dashboard/study-streak";
 
 type SubCategoryStatus = "Weak" | "Average" | "Strong";
 
@@ -13,60 +25,6 @@ function getSubCategoryStatus(accuracy: number): SubCategoryStatus {
   if (accuracy < 60) return "Weak";
   if (accuracy < 80) return "Average";
   return "Strong";
-}
-
-function computeStudyStreak(dates: Date[]): number {
-  if (dates.length === 0) return 0;
-
-  const uniqueDays = new Set(dates.map((d) => d.toISOString().slice(0, 10)));
-
-  const checkDate = new Date();
-  checkDate.setHours(0, 0, 0, 0);
-
-  const todayStr = checkDate.toISOString().slice(0, 10);
-  if (!uniqueDays.has(todayStr)) {
-    checkDate.setDate(checkDate.getDate() - 1);
-  }
-
-  let streak = 0;
-  while (true) {
-    const dateStr = checkDate.toISOString().slice(0, 10);
-    if (uniqueDays.has(dateStr)) {
-      streak++;
-      checkDate.setDate(checkDate.getDate() - 1);
-    } else {
-      break;
-    }
-  }
-  return streak;
-}
-
-function buildStudyActivityHeatmap(
-  dates: Date[],
-  weeks = 13
-): { date: string; count: number }[] {
-  const counts = new Map<string, number>();
-  for (const date of dates) {
-    const key = date.toISOString().slice(0, 10);
-    counts.set(key, (counts.get(key) ?? 0) + 1);
-  }
-
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-
-  const end = new Date(today);
-  const start = new Date(today);
-  start.setDate(start.getDate() - (weeks * 7 - 1));
-  start.setDate(start.getDate() - start.getDay());
-
-  const cells: { date: string; count: number }[] = [];
-  const cursor = new Date(start);
-  while (cursor <= end) {
-    const key = cursor.toISOString().slice(0, 10);
-    cells.push({ date: key, count: counts.get(key) ?? 0 });
-    cursor.setDate(cursor.getDate() + 1);
-  }
-  return cells;
 }
 
 function percentChange(current: number, previous: number): number | null {
@@ -90,67 +48,88 @@ function splitAttemptsByPeriod<T extends { submittedAt: Date | null }>(attempts:
   return { recent, previous };
 }
 
-export async function GET(req: Request) {
+export const GET = timedRoute("GET /api/dashboard", async (req: Request) => {
   const user = await requireAuthApi();
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   const userId = user.id;
   const studentName = user.name ?? "Student";
-  const isPremiumSubscriber = await hasGlobalPremiumAccess(userId);
 
-  const paperExamDates = await prisma.studentPaperExamDate.findMany({
-    where: { userId },
-    select: { paperId: true, examDate: true },
-  });
+  const url = new URL(req.url);
+  const requestedPaperId = url.searchParams.get("paperId")?.trim() || null;
+
+  const [isPremiumSubscriber, paperExamDates, papers] = await timeAsync(
+    "dashboard parallel: sub+examDates+papers",
+    () =>
+      Promise.all([
+        hasGlobalPremiumAccess(userId),
+        prisma.studentPaperExamDate.findMany({
+          where: { userId },
+          select: { paperId: true, examDate: true },
+        }),
+        prisma.paper.findMany({
+          where: { isActive: true },
+          orderBy: { order: "asc" },
+          select: {
+            id: true,
+            code: true,
+            title: true,
+            partId: true,
+            categories: {
+              where: { isActive: true },
+              orderBy: [{ order: "asc" }, { title: "asc" }],
+              select: {
+                id: true,
+                title: true,
+                paperId: true,
+                order: true,
+                subCategories: {
+                  where: { isActive: true },
+                  orderBy: [{ order: "asc" }, { title: "asc" }],
+                  select: {
+                    id: true,
+                    title: true,
+                    order: true,
+                    _count: {
+                      select: {
+                        questions: {
+                          where: { isActive: true, purpose: "PRACTICE" },
+                        },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        }),
+      ])
+  );
+
   const examDatesByPaperId: Record<string, string> = {};
   for (const row of paperExamDates) {
     examDatesByPaperId[row.paperId] = row.examDate.toISOString().slice(0, 10);
   }
 
-  const url = new URL(req.url);
-  const requestedPaperId = url.searchParams.get("paperId")?.trim() || null;
-
-  const papers = await prisma.paper.findMany({
-    where: { isActive: true },
-    orderBy: { order: "asc" },
-    select: {
-      id: true,
-      code: true,
-      title: true,
-      partId: true,
-      categories: {
-        where: { isActive: true },
-        orderBy: [{ order: "asc" }, { title: "asc" }],
-        select: {
-          id: true,
-          title: true,
-          paperId: true,
-          subCategories: {
-            where: { isActive: true },
-            select: { id: true, title: true },
-          },
-        },
-      },
-    },
-  });
-
-  const paperAccess = await Promise.all(
-    papers.map(async (p) => {
-      const hasPremiumAccess =
-        isPremiumSubscriber || (await hasPremiumQuestionAccess(userId, p.id));
-      const counts = await getQuestionCounts(
-        { subCategory: { category: { paperId: p.id } } },
-        hasPremiumAccess
-      );
-      return {
-        id: p.id,
-        code: p.code,
-        title: p.title,
-        hasPremiumAccess,
-        hasFreeTrialQuestions: counts.freeQuestionCount > 0,
-        accessibleQuestionCount: counts.accessibleQuestionCount,
-      };
-    })
+  const paperAccess = await timeAsync(`dashboard paperAccess loop (${papers.length} papers)`, () =>
+    Promise.all(
+      papers.map(async (p) => {
+        const hasPremiumAccess =
+          isPremiumSubscriber || (await hasPremiumQuestionAccess(userId, p.id));
+        const counts = await getQuestionCounts(
+          { subCategory: { category: { paperId: p.id } } },
+          hasPremiumAccess
+        );
+        return {
+          id: p.id,
+          code: p.code,
+          title: p.title,
+          hasPremiumAccess,
+          hasFreeTrialQuestions: counts.freeQuestionCount > 0,
+          accessibleQuestionCount: counts.accessibleQuestionCount,
+        };
+      })
+    )
   );
 
   const hasAnyPremiumAccess =
@@ -181,29 +160,69 @@ export async function GET(req: Request) {
     selectedPaperId = filterPapers[0].id;
   }
 
-  // All submitted attempts (for carousel coverage across papers).
-  const allAttempts = await prisma.quizAttempt.findMany({
-    where: { userId, status: "SUBMITTED" },
-    include: {
-      paper: { select: { id: true, code: true, title: true } },
-      responses: {
-        include: {
-          question: {
-            include: {
-              subCategory: {
-                select: {
-                  id: true,
-                  title: true,
-                  category: { select: { id: true, title: true, paperId: true } },
+  // All submitted attempts (for carousel coverage across papers) +
+  // unfinished practice — independent queries.
+  const [allAttempts, inProgressAttempts] = await timeAsync(
+    "dashboard attempts+inProgress",
+    () =>
+      Promise.all([
+    prisma.quizAttempt.findMany({
+      where: { userId, status: "SUBMITTED" },
+      include: {
+        paper: { select: { id: true, code: true, title: true } },
+        responses: {
+          include: {
+            question: {
+              include: {
+                subCategory: {
+                  select: {
+                    id: true,
+                    title: true,
+                    order: true,
+                    category: {
+                      select: { id: true, title: true, paperId: true, order: true },
+                    },
+                  },
                 },
               },
             },
           },
         },
       },
-    },
-    orderBy: { submittedAt: "desc" },
-  });
+      orderBy: { submittedAt: "desc" },
+    }),
+    prisma.quizAttempt.findMany({
+      where: {
+        userId,
+        status: "IN_PROGRESS",
+        mockExamId: null,
+        ...(selectedPaperId ? { paperId: selectedPaperId } : {}),
+      },
+      include: {
+        responses: {
+          include: {
+            question: {
+              include: {
+                subCategory: {
+                  select: {
+                    id: true,
+                    title: true,
+                    order: true,
+                    category: {
+                      select: { id: true, title: true, paperId: true, order: true },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+      orderBy: { startedAt: "desc" },
+      take: 20,
+    }),
+      ])
+  );
 
   // Scoped attempts for progress insights (always a single selected paper).
   const scopedAttempts = selectedPaperId
@@ -305,6 +324,8 @@ export async function GET(req: Request) {
         paperId: sc.paperId,
         accuracy,
         status: getSubCategoryStatus(accuracy),
+        correctCount: sc.correct,
+        totalAnswered: sc.total,
       };
     })
     .sort((a, b) => a.accuracy - b.accuracy);
@@ -326,9 +347,66 @@ export async function GET(req: Request) {
         paperId: selectedPaperEarly.id,
         accuracy: overallAccuracy,
         status: getSubCategoryStatus(overallAccuracy),
+        correctCount: 0,
+        totalAnswered: 0,
       },
     ];
   }
+
+  function levelLabelFromStatus(
+    status: ReturnType<typeof getSubCategoryStatus>
+  ): "Weak" | "Developing" | "Strong" {
+    if (status === "Weak") return "Weak";
+    if (status === "Average") return "Developing";
+    return "Strong";
+  }
+
+  function splitCoveragePercents(weakN: number, developingN: number, strongN: number) {
+    const total = weakN + developingN + strongN;
+    if (total === 0) return { weakPercent: 0, developingPercent: 0, strongPercent: 0 };
+    const raw = [
+      (weakN / total) * 100,
+      (developingN / total) * 100,
+      (strongN / total) * 100,
+    ];
+    const floors = raw.map((v) => Math.floor(v));
+    let rem = 100 - floors.reduce((a, b) => a + b, 0);
+    const order = raw
+      .map((v, i) => ({ i, frac: v - floors[i] }))
+      .sort((a, b) => b.frac - a.frac);
+    for (let k = 0; k < rem; k++) floors[order[k % order.length].i] += 1;
+    return {
+      weakPercent: floors[0],
+      developingPercent: floors[1],
+      strongPercent: floors[2],
+    };
+  }
+
+  const knowledgeItems = subCategoryDetails.map((sc) => ({
+    ...sc,
+    levelLabel: levelLabelFromStatus(sc.status),
+  }));
+  const knowledgeWeak = knowledgeItems.filter((i) => i.status === "Weak");
+  const knowledgeDeveloping = knowledgeItems.filter((i) => i.status === "Average");
+  const knowledgeStrong = knowledgeItems.filter((i) => i.status === "Strong");
+  const knowledgePercents = splitCoveragePercents(
+    knowledgeWeak.length,
+    knowledgeDeveloping.length,
+    knowledgeStrong.length
+  );
+  const knowledgeCoverage = {
+    ...knowledgePercents,
+    assessedCount: knowledgeItems.length,
+    weak: knowledgeWeak,
+    developing: knowledgeDeveloping,
+    strong: knowledgeStrong,
+    thresholds: {
+      weakBelow: 60,
+      developingMin: 60,
+      developingMax: 79,
+      strongAtOrAbove: 80,
+    },
+  };
 
   const weakSubCategories = subCategoryDetails
     .filter((sc) => sc.status === "Weak")
@@ -457,6 +535,34 @@ export async function GET(req: Request) {
     }
   }
 
+  // Unpractised chapters for Daily Goal “New Chapters” → New Practice list.
+  const newPractice: {
+    subCategoryId: string;
+    paperId: string;
+    categoryId: string;
+    categoryTitle: string;
+    subCategoryTitle: string;
+    reason: string;
+  }[] = [];
+  if (selectedPaperId) {
+    const paper = papers.find((p) => p.id === selectedPaperId);
+    if (paper) {
+      for (const category of paper.categories) {
+        for (const sc of category.subCategories) {
+          if (attemptedSubCategoryIds.has(sc.id)) continue;
+          newPractice.push({
+            subCategoryId: sc.id,
+            paperId: paper.id,
+            categoryId: category.id,
+            categoryTitle: category.title,
+            subCategoryTitle: sc.title,
+            reason: "Not practised yet — counts toward today’s New Chapters goal.",
+          });
+        }
+      }
+    }
+  }
+
   const recentActivity = attempts.slice(0, 10).map((a) => {
     const subCategoryLabels = [
       ...new Set(
@@ -479,15 +585,71 @@ export async function GET(req: Request) {
   });
 
   const scoreHistoryCutoff = Date.now() - 90 * 24 * 60 * 60 * 1000;
+
+  // Per local calendar day: aggregate answered/correct counts by SubCategory
+  // (weighted across multiple practice attempts the same day).
+  type DaySubAgg = {
+    id: string;
+    name: string;
+    correct: number;
+    answered: number;
+  };
+  const subcategoriesByLocalDate = new Map<string, Map<string, DaySubAgg>>();
+
+  for (const attempt of attempts) {
+    if (!attempt.submittedAt || attempt.submittedAt.getTime() < scoreHistoryCutoff) continue;
+    const dateKey = toLocalDateKey(attempt.submittedAt);
+    let dayMap = subcategoriesByLocalDate.get(dateKey);
+    if (!dayMap) {
+      dayMap = new Map();
+      subcategoriesByLocalDate.set(dateKey, dayMap);
+    }
+
+    for (const resp of attempt.responses) {
+      if (!responseWasAnswered(resp)) continue;
+      const sc = resp.question.subCategory;
+      if (!sc) continue;
+      // Paper isolation: only SubCategories belonging to the attempt's paper.
+      if (sc.category.paperId !== attempt.paperId) continue;
+
+      let row = dayMap.get(sc.id);
+      if (!row) {
+        row = { id: sc.id, name: sc.title, correct: 0, answered: 0 };
+        dayMap.set(sc.id, row);
+      }
+      row.answered++;
+      if (resp.isCorrect) row.correct++;
+    }
+  }
+
+  function subcategoriesForDate(dateKey: string) {
+    const dayMap = subcategoriesByLocalDate.get(dateKey);
+    if (!dayMap) return [];
+    return [...dayMap.values()]
+      .filter((row) => row.answered > 0)
+      .map((row) => ({
+        id: row.id,
+        name: row.name,
+        correct: row.correct,
+        answered: row.answered,
+        score: Math.round((row.correct / row.answered) * 100),
+      }))
+      .sort((a, b) => a.name.localeCompare(b.name) || a.id.localeCompare(b.id));
+  }
+
   const scoreHistory = attempts
     .filter((a) => a.submittedAt && a.submittedAt.getTime() >= scoreHistoryCutoff)
     .slice()
     .reverse()
-    .map((a) => ({
-      date: a.submittedAt?.toISOString().slice(0, 10) ?? "",
-      score: Math.round(a.scorePercent ?? 0),
-      paper: a.paper.code,
-    }));
+    .map((a) => {
+      const date = toLocalDateKey(a.submittedAt!);
+      return {
+        date,
+        score: Math.round(a.scorePercent ?? 0),
+        paper: a.paper.code,
+        subcategories: subcategoriesForDate(date),
+      };
+    });
 
   const { recent, previous } = splitAttemptsByPeriod(attempts);
   const recentAvg =
@@ -509,6 +671,86 @@ export async function GET(req: Request) {
   const totalTopics = paperProgress.reduce((sum, p) => sum + p.totalSubCategories, 0);
   const coveragePercent =
     totalTopics > 0 ? Math.round((coveredTopics / totalTopics) * 100) : 0;
+
+  const answeredQuestionIdsBySub = new Map<string, Set<string>>();
+  for (const attempt of attempts) {
+    for (const resp of attempt.responses) {
+      if (!responseWasAnswered(resp) || !resp.question.subCategory) continue;
+      const scId = resp.question.subCategory.id;
+      let ids = answeredQuestionIdsBySub.get(scId);
+      if (!ids) {
+        ids = new Set();
+        answeredQuestionIdsBySub.set(scId, ids);
+      }
+      ids.add(resp.question.id);
+    }
+  }
+
+  function splitThreePercents(a: number, b: number, c: number) {
+    const total = a + b + c;
+    if (total === 0) return { a: 0, b: 0, c: 0 };
+    const raw = [(a / total) * 100, (b / total) * 100, (c / total) * 100];
+    const floors = raw.map((v) => Math.floor(v));
+    let rem = 100 - floors.reduce((s, n) => s + n, 0);
+    const order = raw
+      .map((v, i) => ({ i, frac: v - floors[i] }))
+      .sort((x, y) => y.frac - x.frac);
+    for (let k = 0; k < rem; k++) floors[order[k % order.length].i] += 1;
+    return { a: floors[0], b: floors[1], c: floors[2] };
+  }
+
+  type CoverageTopicRow = {
+    id: string;
+    title: string;
+    categoryId: string;
+    categoryTitle: string;
+    paperId: string;
+    uniqueAnswered: number;
+    totalQuestions: number;
+  };
+
+  const coverageTopics = {
+    completed: [] as CoverageTopicRow[],
+    partial: [] as CoverageTopicRow[],
+    notStarted: [] as CoverageTopicRow[],
+  };
+
+  const papersForCoverage = selectedPaperId
+    ? papers.filter((p) => p.id === selectedPaperId)
+    : papers.filter((p) => allowedPaperIds.has(p.id));
+
+  for (const paper of papersForCoverage) {
+    for (const category of paper.categories) {
+      for (const sc of category.subCategories) {
+        const totalQuestions = sc._count.questions;
+        const uniqueAnswered = answeredQuestionIdsBySub.get(sc.id)?.size ?? 0;
+        const topic = {
+          id: sc.id,
+          title: sc.title,
+          categoryId: category.id,
+          categoryTitle: category.title,
+          paperId: paper.id,
+          uniqueAnswered,
+          totalQuestions,
+        };
+        if (uniqueAnswered <= 0) coverageTopics.notStarted.push(topic);
+        else if (totalQuestions > 0 && uniqueAnswered >= totalQuestions) {
+          coverageTopics.completed.push(topic);
+        } else {
+          coverageTopics.partial.push(topic);
+        }
+      }
+    }
+  }
+
+  const completedCount = coverageTopics.completed.length;
+  const partialCount = coverageTopics.partial.length;
+  const notStartedCount = coverageTopics.notStarted.length;
+  const topicStatusPercents = splitThreePercents(
+    completedCount,
+    partialCount,
+    notStartedCount
+  );
 
   const selectedPaper = selectedPaperId
     ? filterPapers.find((p) => p.id === selectedPaperId) ?? null
@@ -548,11 +790,71 @@ export async function GET(req: Request) {
 
   const finishedCount = categoryCoverage.filter((c) => c.status === "finished").length;
   const onTheWayCount = categoryCoverage.filter((c) => c.status === "on_the_way").length;
-  const notStartedCount = categoryCoverage.filter((c) => c.status === "not_started").length;
+  const categoryNotStartedCount = categoryCoverage.filter((c) => c.status === "not_started").length;
 
   const targetExamDate = selectedPaperId
     ? examDatesByPaperId[selectedPaperId] ?? null
     : null;
+
+  function mapAttemptForLearning(attempt: (typeof allAttempts)[number] | (typeof inProgressAttempts)[number]) {
+    return {
+      id: attempt.id,
+      paperId: attempt.paperId,
+      status: attempt.status,
+      mockExamId: attempt.mockExamId,
+      startedAt: attempt.startedAt,
+      submittedAt: "submittedAt" in attempt ? attempt.submittedAt : null,
+      scorePercent: "scorePercent" in attempt ? attempt.scorePercent : null,
+      responses: attempt.responses.map((resp) => ({
+        isCorrect: resp.isCorrect,
+        selectedOptionId: resp.selectedOptionId,
+        selectedOptionIds: resp.selectedOptionIds,
+        answeredAt: resp.answeredAt,
+        subCategory: resp.question.subCategory
+          ? {
+              id: resp.question.subCategory.id,
+              title: resp.question.subCategory.title,
+              order: resp.question.subCategory.order,
+              category: {
+                id: resp.question.subCategory.category.id,
+                title: resp.question.subCategory.category.title,
+                paperId: resp.question.subCategory.category.paperId,
+                order: resp.question.subCategory.category.order,
+              },
+            }
+          : null,
+      })),
+    };
+  }
+
+  const submittedPracticeMapped = allAttempts
+    .filter((a) => !a.mockExamId)
+    .map(mapAttemptForLearning);
+  const inProgressMapped = inProgressAttempts.map(mapAttemptForLearning);
+
+  let continueLearning = null;
+  if (selectedPaperId && selectedPaper) {
+    const paperFull = papers.find((p) => p.id === selectedPaperId);
+    if (paperFull) {
+      continueLearning = computeContinueLearning({
+        paperId: selectedPaper.id,
+        paperCode: selectedPaper.code,
+        paperTitle: selectedPaper.title,
+        syllabus: buildSyllabus(paperFull),
+        submittedPracticeAttempts: submittedPracticeMapped,
+        inProgressPracticeAttempts: inProgressMapped,
+      });
+    }
+  }
+
+  const dayBounds = getLocalDayBounds();
+  const dailyGoal = computeDailyGoal({
+    allSubmittedPracticeAttempts: submittedPracticeMapped,
+    dayStart: dayBounds.start,
+    dayEnd: dayBounds.end,
+    dateKey: dayBounds.dateKey,
+    timezoneLabel: "local",
+  });
 
   return NextResponse.json({
     studentName,
@@ -577,9 +879,17 @@ export async function GET(req: Request) {
       coveredTopics,
       totalTopics,
       label: selectedPaper
-        ? `Topics practised in ${selectedPaper.code}`
+        ? `Syllabus coverage for ${selectedPaper.code}`
         : "Topics you've practised across all papers",
+      completedCount,
+      partialCount,
+      notStartedCount,
+      completedPercent: topicStatusPercents.a,
+      partialPercent: topicStatusPercents.b,
+      notStartedPercent: topicStatusPercents.c,
+      topics: coverageTopics,
     },
+    knowledgeCoverage,
     categoryCoverage: {
       finished: categoryCoverage.filter((c) => c.status === "finished"),
       onTheWay: categoryCoverage.filter((c) => c.status === "on_the_way"),
@@ -587,7 +897,7 @@ export async function GET(req: Request) {
       counts: {
         finished: finishedCount,
         onTheWay: onTheWayCount,
-        notStarted: notStartedCount,
+        notStarted: categoryNotStartedCount,
         total: categoryCoverage.length,
       },
     },
@@ -595,6 +905,7 @@ export async function GET(req: Request) {
     carouselPapers,
     isPremiumSubscriber,
     recommendedPractice,
+    newPractice,
     recentActivity,
     scoreHistory,
     trends,
@@ -602,5 +913,7 @@ export async function GET(req: Request) {
       practice: practiceScoreSummary,
       mock: mockScoreSummary,
     },
+    continueLearning,
+    dailyGoal,
   });
-}
+});

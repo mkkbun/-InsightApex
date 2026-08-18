@@ -1,12 +1,16 @@
 "use client";
 
+import { useState } from "react";
 import { Card, CardBody } from "@/components/ui/Card";
-import { HalfCycleGauge } from "@/components/ui/HalfCycleGauge";
+import { ExamReadinessGauge } from "@/components/dashboard/ExamReadinessGauge";
+import { ReadinessBreakdownModal } from "@/components/dashboard/ReadinessBreakdownModal";
 import {
   computeExamInsights,
+  getExamReadinessBreakdown,
+  getMainReadinessBlocker,
+  getPredictionConfidence,
   type ScoreTrackSummary,
 } from "@/lib/exam-insights";
-import { cn } from "@/lib/utils";
 
 interface ExamInsightsCardsProps {
   averageScore: number;
@@ -19,36 +23,11 @@ interface ExamInsightsCardsProps {
   mockScores?: ScoreTrackSummary;
 }
 
-function GaugeCard({
-  title,
-  subtitle,
-  value,
-  progressClassName,
-  empty,
-}: {
-  title: string;
-  subtitle: string;
-  value: number;
-  progressClassName: string;
-  empty?: boolean;
-}) {
-  return (
-    <Card className="h-full">
-      <CardBody className="flex flex-col items-center py-5">
-        <p className="text-sm font-semibold text-ink-900">{title}</p>
-        <p className="mt-0.5 text-center text-xs text-slate-500">{subtitle}</p>
-        <div className="mt-4">
-          <HalfCycleGauge
-            value={empty ? 0 : value}
-            progressClassName={empty ? "stroke-slate-200" : progressClassName}
-            label={empty ? "—" : `${Math.round(value)}%`}
-          />
-        </div>
-      </CardBody>
-    </Card>
-  );
-}
-
+/**
+ * Three side-by-side semicircle gauges (Exam success metrics, Predicted mark, Pass probability).
+ * Values still come from computeExamInsights (calculation unchanged).
+ * Exam success metrics opens a Readiness Breakdown popup on click.
+ */
 export function ExamInsightsCards({
   averageScore,
   bestScore,
@@ -59,6 +38,8 @@ export function ExamInsightsCards({
   practiceScores,
   mockScores = { latestScore: null, bestScore: null, count: 0 },
 }: ExamInsightsCardsProps) {
+  const [breakdownOpen, setBreakdownOpen] = useState(false);
+
   const mockAverage =
     mockScores.count > 0 && mockScores.latestScore != null
       ? mockScores.bestScore != null
@@ -77,70 +58,164 @@ export function ExamInsightsCards({
     mockAttemptCount: mockScores.count,
   });
 
-  const scope = paperLabel ? ` · ${paperLabel}` : "";
+  const breakdown = getExamReadinessBreakdown({
+    coveragePercent,
+    averageScore,
+    bestScore,
+    studyStreak,
+    recentScore:
+      practiceScores?.latestScore ?? mockScores.latestScore ?? bestScore,
+  });
+
   const empty = !insights.hasData;
+  const blocker = getMainReadinessBlocker(breakdown, empty);
+  const predictionConfidence = getPredictionConfidence(totalAttempts, empty);
+  const scope = paperLabel ? ` · ${paperLabel}` : "";
+
+  const passHint =
+    empty
+      ? undefined
+      : insights.passLean === "pass"
+        ? "Leaning pass"
+        : insights.passLean === "fail"
+          ? "Keep practicing"
+          : "Need more attempts";
 
   return (
-    <div className="grid gap-4 sm:grid-cols-3">
-      <GaugeCard
-        title="Exam readiness"
-        subtitle={`Based on practice & coverage${scope}`}
-        value={insights.examReadyPercent}
-        progressClassName="stroke-brand-500"
-        empty={empty}
-      />
-      <GaugeCard
-        title="Predicted mark"
-        subtitle={
-          insights.hasMockData
-            ? `Practice + mock exams${scope}`
-            : `From practice marks${scope}`
-        }
-        value={insights.predictedExamMark}
-        progressClassName="stroke-violet-500"
-        empty={empty}
-      />
-      <Card className="h-full">
-        <CardBody className="flex flex-col items-center py-5">
-          <p className="text-sm font-semibold text-ink-900">Pass likelihood</p>
-          <p className="mt-0.5 text-center text-xs text-slate-500">
-            Chance of scoring 50%+{scope}
-          </p>
-          <div className="mt-4">
-            <HalfCycleGauge
-              value={empty ? 0 : insights.passProbabilityPercent}
-              progressClassName={
-                empty
-                  ? "stroke-slate-200"
-                  : insights.passLean === "pass"
-                    ? "stroke-emerald-500"
-                    : insights.passLean === "fail"
-                      ? "stroke-rose-500"
-                      : "stroke-amber-500"
-              }
-              label={empty ? "—" : `${Math.round(insights.passProbabilityPercent)}%`}
-            />
-          </div>
-          {!empty && insights.passLean !== "insufficient" && (
-            <p
-              className={cn(
-                "mt-2 text-xs font-semibold",
-                insights.passLean === "pass" ? "text-emerald-600" : "text-rose-600"
-              )}
+    <>
+      <div className="grid gap-4 sm:grid-cols-3">
+        <Card className="flex h-full flex-col">
+          <CardBody className="flex flex-1 flex-col p-4 sm:p-5">
+            <button
+              type="button"
+              onClick={() => setBreakdownOpen(true)}
+              className="group flex min-h-0 w-full flex-1 cursor-pointer flex-col rounded-xl text-left outline-none transition-colors hover:bg-slate-50/80 focus-visible:ring-2 focus-visible:ring-[#2456f5]/35"
+              aria-haspopup="dialog"
+              aria-expanded={breakdownOpen}
+              aria-label="Exam readiness — open readiness breakdown"
             >
-              {insights.passLean === "pass" ? "Leaning pass" : "Keep practicing"}
+              <div className="flex items-center gap-1.5">
+                <p className="text-base font-semibold text-ink-900">Exam readiness</p>
+                <span
+                  className="inline-flex h-4 w-4 items-center justify-center rounded-full border border-slate-300 text-[10px] font-semibold text-slate-400"
+                  title="Opens a breakdown of coverage, scores, and consistency"
+                >
+                  i
+                </span>
+              </div>
+              <p className="mt-0.5 text-xs text-slate-500">Practice & coverage{scope}</p>
+              <div className="mt-3 flex min-h-0 flex-1 items-center gap-4">
+                <div className="w-[58%] min-w-[11rem] max-w-[18rem] shrink-0">
+                  <ExamReadinessGauge
+                    percent={insights.examReadyPercent}
+                    empty={empty}
+                    compact
+                    hideLegend
+                    metricName="Exam readiness"
+                  />
+                </div>
+                <div className="min-w-0 flex-1">
+                  <p className="text-sm font-medium text-slate-500">{blocker.label}</p>
+                  <p
+                    className={`mt-1 text-lg font-semibold leading-snug ${
+                      blocker.isCritical ? "text-red-500" : "text-ink-900"
+                    }`}
+                  >
+                    {blocker.title}
+                  </p>
+                  <p className="mt-1.5 text-[11px] leading-relaxed text-slate-500">{blocker.hint}</p>
+                </div>
+              </div>
+            </button>
+          </CardBody>
+        </Card>
+
+        <Card className="flex h-full flex-col">
+          <CardBody className="flex flex-1 flex-col p-4 sm:p-5">
+            <div className="flex items-center gap-1.5">
+              <p className="text-base font-semibold text-ink-900">Predicted mark</p>
+              <span
+                className="inline-flex h-4 w-4 items-center justify-center rounded-full border border-slate-300 text-[10px] font-semibold text-slate-400"
+                title="Predicted from your practice scores and coverage. More attempts increase confidence."
+              >
+                i
+              </span>
+            </div>
+            <p className="mt-0.5 text-xs text-slate-500">
+              {insights.hasMockData ? `Practice + mocks${scope}` : `From practice${scope}`}
             </p>
-          )}
-          {practiceScores && practiceScores.count > 0 && practiceScores.latestScore != null && (
-            <p className="mt-1 text-[11px] text-slate-400">
-              Latest practice {practiceScores.latestScore}%
-              {mockScores.count > 0 && mockScores.latestScore != null
-                ? ` · Latest mock ${mockScores.latestScore}%`
-                : ""}
+            <div className="mt-3 flex min-h-0 flex-1 items-center gap-4">
+              <div className="w-[58%] min-w-[11rem] max-w-[18rem] shrink-0">
+                <ExamReadinessGauge
+                  percent={insights.predictedExamMark}
+                  empty={empty}
+                  compact
+                  hideLegend
+                  metricName="Predicted mark"
+                />
+              </div>
+              <div className="min-w-0 flex-1">
+                <p className="flex items-center gap-1.5 text-base font-semibold text-ink-900">
+                  <span
+                    className={`h-2 w-2 shrink-0 rounded-full ${
+                      predictionConfidence.level === "high"
+                        ? "bg-emerald-500"
+                        : predictionConfidence.level === "medium"
+                          ? "bg-brand-500"
+                          : "bg-amber-400"
+                    }`}
+                    aria-hidden
+                  />
+                  {predictionConfidence.label}
+                </p>
+                <p className="mt-1 text-sm text-slate-500">{predictionConfidence.attemptsLabel}</p>
+                <p className="mt-1.5 text-[11px] leading-relaxed text-slate-500">
+                  {predictionConfidence.hint}
+                </p>
+              </div>
+            </div>
+          </CardBody>
+        </Card>
+
+        <Card className="h-full">
+          <CardBody className="flex flex-col p-3.5 sm:p-4">
+            <p className="text-center text-sm font-semibold text-ink-900">Pass probability</p>
+            <p className="mt-0.5 text-center text-xs text-slate-500">
+              Chance of scoring 50%+{scope}
             </p>
-          )}
-        </CardBody>
-      </Card>
-    </div>
+            <div className="mx-auto mt-2 w-full max-w-[268px]">
+              <ExamReadinessGauge
+                percent={insights.passProbabilityPercent}
+                empty={empty}
+                compact
+                metricName="Pass probability"
+              />
+            </div>
+            {!empty && passHint && (
+              <p className="mt-1.5 text-center text-xs font-medium text-slate-600">{passHint}</p>
+            )}
+            {!empty &&
+              practiceScores &&
+              practiceScores.count > 0 &&
+              practiceScores.latestScore != null && (
+                <p className="mt-0.5 text-center text-[11px] text-slate-400">
+                  Latest practice {practiceScores.latestScore}%
+                  {mockScores.count > 0 && mockScores.latestScore != null
+                    ? ` · Latest mock ${mockScores.latestScore}%`
+                    : ""}
+                </p>
+              )}
+          </CardBody>
+        </Card>
+      </div>
+
+      <ReadinessBreakdownModal
+        open={breakdownOpen}
+        onClose={() => setBreakdownOpen(false)}
+        items={breakdown}
+        empty={empty}
+        paperLabel={paperLabel}
+      />
+    </>
   );
 }

@@ -79,6 +79,39 @@ export interface DashboardSubCategoryDetail {
   paperId: string;
   accuracy: number;
   status: SubCategoryPerformanceStatus;
+  /** Answered practice questions in this sub category (scoped). */
+  correctCount: number;
+  totalAnswered: number;
+}
+
+export interface DashboardKnowledgeCoverageLevelItem {
+  id: string;
+  title: string;
+  categoryId: string;
+  categoryTitle: string;
+  paperId: string;
+  accuracy: number;
+  status: SubCategoryPerformanceStatus;
+  levelLabel: "Weak" | "Developing" | "Strong";
+  correctCount: number;
+  totalAnswered: number;
+}
+
+/** Performance-based knowledge mix (Weak / Developing / Strong) for the scoped paper. */
+export interface DashboardKnowledgeCoverage {
+  weakPercent: number;
+  developingPercent: number;
+  strongPercent: number;
+  assessedCount: number;
+  weak: DashboardKnowledgeCoverageLevelItem[];
+  developing: DashboardKnowledgeCoverageLevelItem[];
+  strong: DashboardKnowledgeCoverageLevelItem[];
+  thresholds: {
+    weakBelow: number;
+    developingMin: number;
+    developingMax: number;
+    strongAtOrAbove: number;
+  };
 }
 
 export interface DashboardPaperProgress {
@@ -122,11 +155,34 @@ export interface DashboardFilterPaper {
   title: string;
 }
 
+export interface DashboardCoverageTopic {
+  id: string;
+  title: string;
+  categoryId: string;
+  categoryTitle: string;
+  paperId: string;
+  uniqueAnswered: number;
+  totalQuestions: number;
+}
+
 export interface DashboardCoverage {
   percent: number;
   coveredTopics: number;
   totalTopics: number;
   label: string;
+  /** Topics where every practice question has been answered. */
+  completedCount: number;
+  /** Topics with some, but not all, practice questions answered. */
+  partialCount: number;
+  notStartedCount: number;
+  completedPercent: number;
+  partialPercent: number;
+  notStartedPercent: number;
+  topics: {
+    completed: DashboardCoverageTopic[];
+    partial: DashboardCoverageTopic[];
+    notStarted: DashboardCoverageTopic[];
+  };
 }
 
 export type CategoryCoverageStatus = "finished" | "on_the_way" | "not_started";
@@ -155,6 +211,22 @@ export interface DashboardCategoryCoverage {
   };
 }
 
+/** Subcategory accuracy for one local calendar day on the selected paper. */
+export interface DashboardScoreHistorySubcategory {
+  id: string;
+  name: string;
+  correct: number;
+  answered: number;
+  score: number;
+}
+
+export interface DashboardScoreHistoryPoint {
+  date: string;
+  score: number;
+  paper: string;
+  subcategories: DashboardScoreHistorySubcategory[];
+}
+
 export interface DashboardOverview {
   studentName: string;
   targetExamDate: string | null;
@@ -172,13 +244,16 @@ export interface DashboardOverview {
   weakSubCategories: string[];
   subCategoryDetails: DashboardSubCategoryDetail[];
   coverage: DashboardCoverage;
+  knowledgeCoverage: DashboardKnowledgeCoverage;
   categoryCoverage: DashboardCategoryCoverage;
   paperProgress: DashboardPaperProgress[];
   carouselPapers: DashboardPaperProgress[];
   isPremiumSubscriber: boolean;
   recommendedPractice: DashboardRecommendedPractice[];
+  /** Unpractised SubCategories for the selected paper (Daily Goal “New Chapters”). */
+  newPractice: DashboardRecommendedPractice[];
   recentActivity: DashboardRecentActivity[];
-  scoreHistory: { date: string; score: number; paper: string }[];
+  scoreHistory: DashboardScoreHistoryPoint[];
   attemptScores: {
     practice: { latestScore: number | null; bestScore: number | null; count: number };
     mock: { latestScore: number | null; bestScore: number | null; count: number };
@@ -187,6 +262,44 @@ export interface DashboardOverview {
     attempts: number | null;
     averageScore: number | null;
     completedQuizzes: number | null;
+  };
+  continueLearning: {
+    paperId: string;
+    paperCode: string;
+    paperTitle: string;
+    status:
+      | "unfinished"
+      | "continue_next"
+      | "all_complete"
+      | "ready_to_start"
+      | "no_syllabus";
+    lastCompleted: {
+      categoryId: string;
+      categoryTitle: string;
+      subCategoryId: string;
+      subCategoryTitle: string;
+    } | null;
+    upNext: {
+      categoryId: string;
+      categoryTitle: string;
+      subCategoryId: string;
+      subCategoryTitle: string;
+    } | null;
+    href: string | null;
+    progressPercent: number;
+    chaptersCompleted: number;
+    chaptersTotal: number;
+  } | null;
+  dailyGoal: {
+    dateKey: string;
+    timezone: string;
+    questions: { current: number; target: number };
+    weakTopic: { current: number; target: number };
+    quizScore: { current: number; target: number; threshold: number };
+    goalsCompleted: number;
+    goalsTotal: number;
+    overallPercent: number;
+    completed: boolean;
   };
 }
 

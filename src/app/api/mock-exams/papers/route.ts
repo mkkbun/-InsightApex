@@ -2,8 +2,9 @@ import { NextResponse } from "next/server";
 import { requireAuthApi } from "@/lib/admin-auth";
 import { prisma } from "@/lib/prisma";
 import { hasGlobalPremiumAccess, hasMockExamAccess } from "@/services/access-control";
+import { timeAsync, timedRoute } from "@/lib/perf-timing";
 
-export async function GET(req: Request) {
+export const GET = timedRoute("GET /api/mock-exams/papers", async (req: Request) => {
   const user = await requireAuthApi();
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
@@ -36,8 +37,11 @@ export async function GET(req: Request) {
     },
   });
 
-  const results = await Promise.all(
-    papers.map(async (paper) => {
+  const results = await timeAsync(
+    `mock-exams/papers access (${papers.length} papers)`,
+    () =>
+      Promise.all(
+        papers.map(async (paper) => {
       const accessFlags = await Promise.all(
         paper.mockExams.map((exam) => hasMockExamAccess(user.id, exam.id))
       );
@@ -57,8 +61,9 @@ export async function GET(req: Request) {
         hasAnyAccess,
         isLocked: !hasAnyAccess,
       };
-    })
+        })
+      )
   );
 
   return NextResponse.json(results);
-}
+});

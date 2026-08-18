@@ -1,10 +1,11 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import Link from "next/link";
 import { signOut } from "next-auth/react";
 import { GlobalSearch } from "@/components/layout/GlobalSearch";
 import { NotificationBell } from "@/components/layout/NotificationBell";
+import { NavStudyStreak } from "@/components/layout/NavStudyStreak";
 import { Avatar } from "@/components/ui/Avatar";
 import { Badge } from "@/components/ui/Badge";
 import { Dropdown } from "@/components/ui/Dropdown";
@@ -19,6 +20,9 @@ interface AppTopBarProps {
   onToggleSidebar: () => void;
   onMenuOpen?: () => void;
   studyStreak?: number;
+  studyActivity?: { date: string; count: number }[];
+  /** When provided by DashboardShell, skips a duplicate billing fetch. */
+  isPremium?: boolean;
 }
 
 export function IconGridToggle({ className }: { className?: string }) {
@@ -37,20 +41,11 @@ export function AppTopBar({
   sidebarExpanded,
   onToggleSidebar,
   onMenuOpen,
-  studyStreak,
+  studyStreak = 0,
+  studyActivity = [],
+  isPremium = false,
 }: AppTopBarProps) {
-  const [isPremium, setIsPremium] = useState(false);
   const [mobileSearchOpen, setMobileSearchOpen] = useState(false);
-
-  useEffect(() => {
-    fetch("/api/billing/dashboard", { cache: "no-store" })
-      .then((r) => r.json())
-      .then((data) => {
-        const status = data.subscription?.status;
-        setIsPremium(status === "ACTIVE" || status === "TRIALING");
-      })
-      .catch(() => {});
-  }, []);
 
   return (
     <header className="sticky top-0 z-50 w-full border-b border-slate-200/60 bg-white/90 shadow-[0_1px_0_rgba(15,23,42,0.04)] backdrop-blur-xl">
@@ -114,11 +109,8 @@ export function AppTopBar({
               <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
             </svg>
           </button>
-          {studyStreak !== undefined && studyStreak > 0 && (
-            <div className="hidden items-center gap-1.5 rounded-full border border-orange-200/50 bg-gradient-to-r from-orange-50 to-amber-50 px-3 py-1.5 md:flex">
-              <span className="text-sm leading-none">🔥</span>
-              <span className="text-xs font-semibold text-orange-700">{studyStreak} day streak</span>
-            </div>
+          {studyStreak !== undefined && (
+            <NavStudyStreak studyStreak={studyStreak} studyActivity={studyActivity} />
           )}
 
           <NotificationBell />

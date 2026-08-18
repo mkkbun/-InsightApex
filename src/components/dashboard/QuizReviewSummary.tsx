@@ -29,7 +29,7 @@ export function QuizReviewSummary({
   onResume,
 }: QuizReviewSummaryProps) {
   return (
-    <div className="mx-auto w-full max-w-none space-y-8">
+    <div className="mx-auto max-w-3xl space-y-8">
       <h1 className="text-3xl font-bold text-slate-900">Review</h1>
 
       <div className="space-y-3">

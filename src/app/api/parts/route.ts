@@ -1,8 +1,9 @@
 import { NextResponse } from "next/server";
 import { requireAuthApi } from "@/lib/admin-auth";
 import { prisma } from "@/lib/prisma";
+import { timedRoute } from "@/lib/perf-timing";
 
-export async function GET() {
+export const GET = timedRoute("GET /api/parts", async () => {
   const user = await requireAuthApi();
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
@@ -28,4 +29,4 @@ export async function GET() {
       paperCount: part._count.papers,
     }))
   );
-}
+});

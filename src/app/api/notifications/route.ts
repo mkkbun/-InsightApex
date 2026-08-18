@@ -5,8 +5,9 @@ import {
   listNotifications,
   markAllNotificationsRead,
 } from "@/services/notifications";
+import { timedRoute } from "@/lib/perf-timing";
 
-export async function GET() {
+export const GET = timedRoute("GET /api/notifications", async () => {
   const user = await requireAuthApi();
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
@@ -32,7 +33,7 @@ export async function GET() {
     console.error("[api/notifications GET]", error);
     return NextResponse.json({ error: "Could not load notifications." }, { status: 500 });
   }
-}
+});
 
 export async function POST(req: Request) {
   const user = await requireAuthApi();

@@ -13,6 +13,16 @@ const statusTone: Record<string, "danger" | "warning" | "success"> = {
   Strong: "success",
 };
 
+function studyHref(subCategory: DashboardSubCategoryDetail): string {
+  if (!subCategory.categoryId) return "/dashboard/quiz";
+  const params = new URLSearchParams({
+    paperId: subCategory.paperId,
+    categoryId: subCategory.categoryId,
+    subCategoryId: subCategory.id,
+  });
+  return `/dashboard/quiz?${params.toString()}`;
+}
+
 export function WeakSubCategoryItem({ subCategory }: WeakSubCategoryItemProps) {
   const barTone = subCategory.accuracy < 60 ? "danger" : subCategory.accuracy < 80 ? "warning" : "success";
 
@@ -34,7 +44,7 @@ export function WeakSubCategoryItem({ subCategory }: WeakSubCategoryItemProps) {
         />
       </div>
       <Link
-        href="/dashboard/quiz"
+        href={studyHref(subCategory)}
         className="mt-3 inline-block text-xs font-semibold text-brand-600 hover:text-brand-700"
       >
         Study now →

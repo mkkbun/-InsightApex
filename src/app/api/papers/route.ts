@@ -7,8 +7,9 @@ import {
   hasPaperAccess,
   hasPremiumQuestionAccess,
 } from "@/services/access-control";
+import { timeAsync, timedRoute } from "@/lib/perf-timing";
 
-export async function GET(req: Request) {
+export const GET = timedRoute("GET /api/papers", async (req: Request) => {
   const user = await requireAuthApi();
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
@@ -28,8 +29,11 @@ export async function GET(req: Request) {
     },
   });
 
-  const accessResults = await Promise.all(
-    papers.map(async (p) => {
+  const accessResults = await timeAsync(
+    `papers access+counts (${papers.length} papers)`,
+    () =>
+      Promise.all(
+        papers.map(async (p) => {
       const hasPremium = isPremiumSubscriber || (await hasPremiumQuestionAccess(user.id, p.id));
       const hasAccess = await hasPaperAccess(user.id, p.id);
       const counts = await getQuestionCounts(
@@ -47,7 +51,8 @@ export async function GET(req: Request) {
         categoryCount,
         ...counts,
       };
-    })
+        })
+      )
   );
 
   return NextResponse.json(
@@ -85,4 +90,4 @@ export async function GET(req: Request) {
       })
     )
   );
-}
+});

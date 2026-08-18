@@ -1,6 +1,7 @@
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { isContentAdmin, isOwner, isPlatformStaff } from "@/lib/roles";
+import { logPerf } from "@/lib/perf-timing";
 
 export type AdminApiUser = {
   id: string;
@@ -10,7 +11,9 @@ export type AdminApiUser = {
 };
 
 async function getSessionUser(): Promise<AdminApiUser | null> {
+  const start = performance.now();
   const session = await getServerSession(authOptions);
+  logPerf("getServerSession (api)", performance.now() - start);
   const user = session?.user;
   if (!user?.id || !user.role) return null;
   return {

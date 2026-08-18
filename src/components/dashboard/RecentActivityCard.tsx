@@ -42,13 +42,13 @@ export function RecentActivityCard({
                   href={`/dashboard/quiz/result?attemptId=${a.id}`}
                   className="-mx-2 flex items-start justify-between gap-3 rounded-lg px-2 py-3 transition-colors hover:bg-slate-50/80"
                 >
-                  <div className="min-w-0">
-                    <p className="truncate text-sm font-medium text-ink-900">{a.paper}</p>
-                    <p className="truncate text-xs text-slate-500">
+                  <div className="min-w-0 flex-1">
+                    <p className="text-sm font-medium text-ink-900">{a.paper}</p>
+                    <p className="mt-0.5 text-xs leading-snug text-slate-500">
                       {a.subCategory ?? "Practice"} · {formatWhen(a.date)}
                     </p>
                   </div>
-                  <div className="flex shrink-0 flex-col items-end gap-1">
+                  <div className="flex shrink-0 flex-col items-end gap-1 sm:flex-row sm:items-center sm:gap-3">
                     <span className="text-sm font-semibold text-slate-800">
                       {a.score != null ? `${Math.round(a.score)}%` : "—"}
                     </span>

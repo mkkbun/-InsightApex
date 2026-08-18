@@ -1,7 +1,8 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { timedRoute } from "@/lib/perf-timing";
 
-export async function GET() {
+export const GET = timedRoute("GET /api/billing/products", async () => {
   const products = await prisma.product.findMany({
     where: { isActive: true, type: { in: ["PAPER", "MOCK_EXAM"] } },
     orderBy: { name: "asc" },
@@ -29,4 +30,4 @@ export async function GET() {
       hasStripePrice: Boolean(p.providerPriceId),
     }))
   );
-}
+});

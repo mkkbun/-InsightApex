@@ -7,14 +7,16 @@ import { ExamInsightsCards } from "@/components/dashboard/ExamInsightsCards";
 import { PerformanceTrendCard } from "@/components/dashboard/PerformanceTrendCard";
 import { RecentActivityCard } from "@/components/dashboard/RecentActivityCard";
 import { StrongAreasCard } from "@/components/dashboard/StrongAreasCard";
-import { StudyStreakCard } from "@/components/dashboard/StudyStreakCard";
 import { WeakAreasCard } from "@/components/dashboard/WeakAreasCard";
 import { WelcomeHeader } from "@/components/dashboard/WelcomeHeader";
 import { RecommendedPracticeItem } from "@/components/dashboard/RecommendedPracticeItem";
-import { KnowledgeCoverageModal } from "@/components/dashboard/KnowledgeCoverageModal";
+import { NewPracticeCard } from "@/components/dashboard/NewPracticeCard";
+import { SyllabusTopicsModal } from "@/components/dashboard/SyllabusTopicsModal";
+import { ContinueWhereLeftOffCard } from "@/components/dashboard/ContinueWhereLeftOffCard";
+import { DailyGoalCard } from "@/components/dashboard/DailyGoalCard";
+import { OverallCoverageCard } from "@/components/dashboard/OverallCoverageCard";
 import { Card, CardBody, CardHeader } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
-import { CircularProgress } from "@/components/ui/CircularProgress";
 import { DashboardSkeleton } from "@/components/ui/Skeleton";
 import type { DashboardOverview } from "@/types";
 
@@ -31,7 +33,7 @@ export default function DashboardClient() {
   const [data, setData] = useState<DashboardOverview | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [knowledgeOpen, setKnowledgeOpen] = useState(false);
+  const [syllabusOpen, setSyllabusOpen] = useState(false);
 
   const loadDashboard = useCallback(async (paperId: string | null) => {
     setLoading(true);
@@ -152,10 +154,9 @@ export default function DashboardClient() {
       <section className="space-y-4">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
           <div>
-            <h2 className="section-title">Exam readiness</h2>
+            <h2 className="section-title">Exam success metrics</h2>
             <p className="section-subtitle">
               Predictions from your practice marks
-              {data?.studyStreak ? ` · ${data.studyStreak}-day streak` : ""}
             </p>
           </div>
           <div className="w-full sm:max-w-xs">
@@ -192,7 +193,27 @@ export default function DashboardClient() {
 
       <section className="space-y-4">
         <div>
-          <h2 className="section-title">Progress &amp; Performance</h2>
+          <h2 className="section-title">Keep going</h2>
+          <p className="section-subtitle">
+            Resume your syllabus and track today&apos;s study targets
+            {loading ? " · Updating…" : ""}
+          </p>
+        </div>
+        <div className={`grid gap-4 md:grid-cols-2 ${loading ? "opacity-60" : ""}`}>
+          <ContinueWhereLeftOffCard data={data?.continueLearning} loading={loading} />
+          <DailyGoalCard
+            data={data?.dailyGoal}
+            loading={loading}
+            onQuestionsClick={() => router.push("/dashboard/quiz")}
+            onWeakTopicClick={() => scrollToSection("recommended-practice")}
+            onQuizScoreClick={() => router.push("/dashboard/quiz")}
+          />
+        </div>
+      </section>
+
+      <section className="space-y-4">
+        <div>
+          <h2 className="section-title">Performance insight and analytics</h2>
           <p className="section-subtitle">
             Insights for {paperLabel}
             {loading ? " · Updating…" : ""}
@@ -242,47 +263,20 @@ export default function DashboardClient() {
             </section>
 
             <section id="progress" className="scroll-mt-6">
-              <Card className="h-full">
-                <CardHeader>
-                  <h2 className="section-title">Overall Coverage</h2>
-                  <p className="section-subtitle">
-                    {coverage?.label ?? "Topics you've practised across all papers"}
-                  </p>
-                </CardHeader>
-                <CardBody className="flex flex-col items-center justify-center gap-5 py-6">
-                  <CircularProgress
-                    value={coverage?.percent ?? 0}
-                    size={140}
-                    sublabel={`${coverage?.coveredTopics ?? 0} of ${coverage?.totalTopics ?? 0} topics`}
-                  />
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => setKnowledgeOpen(true)}
-                    className="w-full max-w-[220px]"
-                  >
-                    Knowledge coverage
-                  </Button>
-                </CardBody>
-              </Card>
+              <OverallCoverageCard
+                coverage={coverage}
+                onOpenSyllabus={() => setSyllabusOpen(true)}
+              />
             </section>
 
             <section id="performance-trend" className="scroll-mt-6">
               <PerformanceTrendCard scoreHistory={data?.scoreHistory ?? []} />
             </section>
 
-            <section id="recent-activity" className="scroll-mt-6">
+            <section id="recent-activity" className="scroll-mt-6 md:col-span-2">
               <RecentActivityCard
                 activities={data?.recentActivity ?? []}
                 totalAttempts={data?.totalAttempts ?? 0}
-              />
-            </section>
-
-            <section id="study-streak" className="scroll-mt-6">
-              <StudyStreakCard
-                studyStreak={data?.studyStreak ?? 0}
-                studyActivity={data?.studyActivity ?? []}
-                hasAttempts={hasAttempts}
               />
             </section>
           </div>
@@ -290,18 +284,31 @@ export default function DashboardClient() {
       </section>
 
       {hasAttempts && data?.recommendedPractice && data.recommendedPractice.length > 0 && (
-        <Card>
-          <CardHeader>
-            <h2 className="section-title">Recommended Practice</h2>
-            <p className="section-subtitle">Suggested topics based on your performance</p>
-          </CardHeader>
-          <CardBody className="space-y-3">
-            {data.recommendedPractice.map((item) => (
-              <RecommendedPracticeItem key={item.subCategoryId} item={item} />
-            ))}
-          </CardBody>
-        </Card>
+        <section id="recommended-practice" className="scroll-mt-6">
+          <Card>
+            <CardHeader>
+              <h2 className="section-title">Practice Weak Topic</h2>
+              <p className="section-subtitle">Suggested topics based on your performance</p>
+            </CardHeader>
+            <CardBody className="space-y-3">
+              {data.recommendedPractice.map((item) => (
+                <RecommendedPracticeItem key={item.subCategoryId} item={item} />
+              ))}
+            </CardBody>
+          </Card>
+        </section>
       )}
+
+      {data?.selectedPaperId ? (
+        <NewPracticeCard
+          items={data?.newPractice ?? []}
+          paperLabel={
+            data.selectedPaper
+              ? `${data.selectedPaper.code} – ${data.selectedPaper.title}`
+              : paperLabel
+          }
+        />
+      ) : null}
 
       <Card variant="gradient" className="flex items-center justify-between gap-4 p-6">
         <div className="flex items-center gap-4">
@@ -318,10 +325,10 @@ export default function DashboardClient() {
         </Link>
       </Card>
 
-      <KnowledgeCoverageModal
-        open={knowledgeOpen}
-        onClose={() => setKnowledgeOpen(false)}
-        coverage={data?.categoryCoverage}
+      <SyllabusTopicsModal
+        open={syllabusOpen}
+        onClose={() => setSyllabusOpen(false)}
+        coverage={coverage}
         paperLabel={paperLabel}
       />
     </div>

@@ -2,8 +2,9 @@ import { NextResponse } from "next/server";
 import { requireAuthApi } from "@/lib/admin-auth";
 import { prisma } from "@/lib/prisma";
 import { getActiveSubscription } from "@/services/subscription";
+import { timedRoute } from "@/lib/perf-timing";
 
-export async function GET() {
+export const GET = timedRoute("GET /api/billing/dashboard", async () => {
   const user = await requireAuthApi();
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
@@ -95,4 +96,4 @@ export async function GET() {
       description: p.subscription?.plan?.name ?? p.purchase?.type ?? "Payment",
     })),
   });
-}
+});

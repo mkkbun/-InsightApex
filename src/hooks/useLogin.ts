@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
 import { getSession, signIn, signOut } from "next-auth/react";
 import { homePathForRole, isOwner, isContentAdmin, isPlatformStaff } from "@/lib/roles";
 
@@ -34,17 +35,17 @@ function getRedirectMessage(path: string): string {
 const REDIRECT_FALLBACK_MS = 8_000;
 
 /**
- * Hard navigation after credentials login.
- * Soft `router.replace` can leave the login view mounted under AdminShell
- * when the JWT cookie is not yet visible to the next soft navigation.
+ * Hard navigation — required for admin login so AdminShell / cookie timing
+ * cannot leave the login view stuck. Prefer soft router.replace for students.
  */
-function navigateOnce(path: string) {
+function hardNavigate(path: string) {
   if (typeof window === "undefined") return;
   window.location.replace(path);
 }
 
 export function useLogin(options: UseLoginOptions = {}) {
   const { adminOnly = false } = options;
+  const router = useRouter();
   const [status, setStatus] = useState<LoginStatus>("idle");
   const [error, setError] = useState<string | null>(null);
   const [needsEmailVerification, setNeedsEmailVerification] = useState(false);
@@ -70,13 +71,13 @@ export function useLogin(options: UseLoginOptions = {}) {
 
   useEffect(() => () => clearFallback(), [clearFallback]);
 
-  // 8s max stuck on "Redirecting..." — force hard navigation if still on this page
+  // Fallback: if soft nav stalls, hard-navigate once.
   useEffect(() => {
     if (status !== "redirecting" || !redirectTarget) return;
 
     clearFallback();
     fallbackTimerRef.current = setTimeout(() => {
-      navigateOnce(redirectTarget);
+      hardNavigate(redirectTarget);
     }, REDIRECT_FALLBACK_MS);
 
     return clearFallback;
@@ -111,10 +112,9 @@ export function useLogin(options: UseLoginOptions = {}) {
           return;
         }
 
-        // Allow cookie/session to settle before reading JWT
         let session = await getSession();
         if (!session?.user?.role) {
-          await new Promise((r) => setTimeout(r, 150));
+          await new Promise((r) => setTimeout(r, 100));
           session = await getSession();
         }
 
@@ -132,23 +132,27 @@ export function useLogin(options: UseLoginOptions = {}) {
           return;
         }
 
-        // Extra guard for student login path when platform staff signs in there
         if (!adminOnly && isPlatformStaff(role) && isOwner(role)) {
-          // already sent to /admin via homePathForRole
+          // homePathForRole already sends owners to /admin
         }
 
         setRedirectMessage(getRedirectMessage(destination));
         setRedirectTarget(destination);
         setStatus("redirecting");
 
-        // Single hard navigation — no soft router loop with /admin/login
-        navigateOnce(destination);
+        // Admin: hard navigate (cookie + AdminShell race). Students: soft client nav.
+        if (adminOnly || destination.startsWith("/admin")) {
+          hardNavigate(destination);
+        } else {
+          router.replace(destination);
+          router.refresh();
+        }
       } catch {
         setError("Something went wrong. Please try again.");
         resetSubmission();
       }
     },
-    [adminOnly, resetSubmission]
+    [adminOnly, resetSubmission, router]
   );
 
   const isLoading = status === "signing-in" || status === "redirecting";

@@ -1,8 +1,9 @@
 import { NextResponse } from "next/server";
 import { requireAuthApi } from "@/lib/admin-auth";
 import { prisma } from "@/lib/prisma";
+import { timedRoute } from "@/lib/perf-timing";
 
-export async function GET(req: Request) {
+export const GET = timedRoute("GET /api/quiz/result", async (req: Request) => {
   const user = await requireAuthApi();
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
@@ -120,4 +121,4 @@ export async function GET(req: Request) {
       };
     }),
   });
-}
+});

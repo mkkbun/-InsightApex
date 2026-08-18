@@ -1,17 +1,75 @@
 "use client";
 
 import {
-  AreaChart, Area, XAxis, YAxis, CartesianGrid,
-  Tooltip, ResponsiveContainer, ReferenceLine,
+  AreaChart,
+  Area,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
+  ResponsiveContainer,
+  ReferenceLine,
 } from "recharts";
+import type {
+  DashboardScoreHistoryPoint,
+  DashboardScoreHistorySubcategory,
+} from "@/types";
 
-interface DataPoint {
-  date: string;
-  score: number;
-  paper: string;
+type ChartPoint = DashboardScoreHistoryPoint & { label: string };
+
+function formatLocalDateLabel(dateKey: string): string {
+  const parts = dateKey.split("-").map(Number);
+  if (parts.length !== 3 || parts.some((n) => !Number.isFinite(n))) return dateKey;
+  const [y, m, d] = parts;
+  return new Date(y, m - 1, d).toLocaleDateString("en-GB", {
+    day: "numeric",
+    month: "short",
+  });
 }
 
-export function ScoreChart({ data }: { data: DataPoint[] }) {
+function PerformanceTrendTooltip({
+  active,
+  payload,
+}: {
+  active?: boolean;
+  payload?: Array<{ payload: ChartPoint }>;
+}) {
+  if (!active || !payload?.length) return null;
+
+  const point = payload[0].payload;
+  const subs: DashboardScoreHistorySubcategory[] = point.subcategories ?? [];
+
+  return (
+    <div className="max-w-xs rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-xs shadow-[0_4px_12px_rgba(16,24,40,0.08)]">
+      <p className="font-semibold text-ink-900">{point.label}</p>
+
+      {subs.length > 0 ? (
+        <ul className="mt-2 max-h-48 space-y-1.5 overflow-y-auto overscroll-contain pr-0.5">
+          {subs.map((sc) => (
+            <li key={sc.id} className="flex items-start justify-between gap-3">
+              <span className="min-w-0 flex-1 break-words leading-snug text-slate-600">
+                {sc.name}
+              </span>
+              <span className="shrink-0 font-semibold tabular-nums text-ink-900">
+                {sc.score}%
+              </span>
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <p className="mt-2 text-slate-500">
+          Overall {point.score}%
+          {point.paper ? ` · ${point.paper}` : ""}
+          <span className="mt-0.5 block text-[11px] text-slate-400">
+            No subcategory detail for this date
+          </span>
+        </p>
+      )}
+    </div>
+  );
+}
+
+export function ScoreChart({ data }: { data: DashboardScoreHistoryPoint[] }) {
   if (!data || data.length === 0) {
     return (
       <div className="flex h-52 flex-col items-center justify-center rounded-xl border border-dashed border-slate-200 bg-slate-50/50 text-center">
@@ -24,9 +82,10 @@ export function ScoreChart({ data }: { data: DataPoint[] }) {
     );
   }
 
-  const formatted = data.map((d) => ({
+  const formatted: ChartPoint[] = data.map((d) => ({
     ...d,
-    label: new Date(d.date).toLocaleDateString("en-GB", { day: "numeric", month: "short" }),
+    subcategories: d.subcategories ?? [],
+    label: formatLocalDateLabel(d.date),
   }));
 
   return (
@@ -56,17 +115,9 @@ export function ScoreChart({ data }: { data: DataPoint[] }) {
           tickLine={false}
         />
         <Tooltip
-          contentStyle={{
-            fontSize: 12,
-            borderRadius: 12,
-            border: "1px solid #e2e8f0",
-            boxShadow: "0 4px 12px rgba(16,24,40,0.08)",
-          }}
-          formatter={(v, _n, props) => [
-            `${v}%`,
-            `${(props.payload as DataPoint).paper}`,
-          ]}
-          labelFormatter={(label) => `Date: ${label}`}
+          content={<PerformanceTrendTooltip />}
+          wrapperStyle={{ outline: "none", zIndex: 20 }}
+          allowEscapeViewBox={{ x: true, y: true }}
         />
         <ReferenceLine
           y={50}

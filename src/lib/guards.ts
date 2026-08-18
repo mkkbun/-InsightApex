@@ -2,6 +2,7 @@ import { getServerSession } from "next-auth";
 import { redirect } from "next/navigation";
 import { authOptions } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
+import { logPerf } from "@/lib/perf-timing";
 import {
   homePathForRole,
   isContentAdmin,
@@ -13,7 +14,9 @@ import {
 } from "@/lib/roles";
 
 export async function getCurrentUser() {
+  const start = performance.now();
   const session = await getServerSession(authOptions);
+  logPerf("getServerSession (guards)", performance.now() - start);
   return session?.user ?? null;
 }
 

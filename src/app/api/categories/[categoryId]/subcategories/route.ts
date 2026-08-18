@@ -2,8 +2,11 @@ import { NextResponse } from "next/server";
 import { requireAuthApi } from "@/lib/admin-auth";
 import { prisma } from "@/lib/prisma";
 import { getQuestionCounts, hasGlobalPremiumAccess, hasPremiumQuestionAccess } from "@/services/access-control";
+import { timedRoute } from "@/lib/perf-timing";
 
-export async function GET(_req: Request, { params }: { params: { categoryId: string } }) {
+export const GET = timedRoute(
+  "GET /api/categories/:id/subcategories",
+  async (_req: Request, { params }: { params: { categoryId: string } }) => {
   const user = await requireAuthApi();
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
@@ -39,4 +42,4 @@ export async function GET(_req: Request, { params }: { params: { categoryId: str
   );
 
   return NextResponse.json(results);
-}
+});

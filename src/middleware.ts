@@ -2,6 +2,7 @@ import { getToken } from "next-auth/jwt";
 import { NextRequest, NextResponse } from "next/server";
 import { AUTH_RATE_LIMIT, checkRateLimit } from "@/lib/rate-limit";
 import { isContentAdminAllowedPath } from "@/lib/roles";
+import { logPerf } from "@/lib/perf-timing";
 
 function getClientIp(req: NextRequest): string {
   const forwarded = req.headers.get("x-forwarded-for");
@@ -27,18 +28,39 @@ const MAINTENANCE_BLOCKED_PREFIXES = [
   "/reset-password",
 ];
 
+/** Edge-local cache — avoid a settings fetch on every matched navigation. */
+const MAINTENANCE_CACHE_MS = 30_000;
+let maintenanceCache: {
+  at: number;
+  data: { maintenanceMode?: boolean; maintenanceAdminAccess?: boolean } | null;
+} | null = null;
+
 async function getMaintenanceFlags(req: NextRequest) {
+  const start = performance.now();
+  const now = Date.now();
+  if (maintenanceCache && now - maintenanceCache.at < MAINTENANCE_CACHE_MS) {
+    logPerf("middleware maintenance (cache hit)", performance.now() - start);
+    return maintenanceCache.data;
+  }
+
   try {
     const res = await fetch(new URL("/api/settings/public", req.url), {
       headers: { "x-maintenance-check": "1" },
       next: { revalidate: 30 },
     });
-    if (!res.ok) return null;
-    return (await res.json()) as {
+    if (!res.ok) {
+      logPerf("middleware maintenance (fetch !ok)", performance.now() - start);
+      return null;
+    }
+    const data = (await res.json()) as {
       maintenanceMode?: boolean;
       maintenanceAdminAccess?: boolean;
     };
+    maintenanceCache = { at: now, data };
+    logPerf("middleware maintenance (fetch)", performance.now() - start);
+    return data;
   } catch {
+    logPerf("middleware maintenance (error)", performance.now() - start);
     return null;
   }
 }
@@ -52,6 +74,15 @@ function withRequestHeader(req: NextRequest, key: string, value: string) {
 }
 
 export async function middleware(req: NextRequest) {
+  const mwStart = performance.now();
+  try {
+    return await runMiddleware(req);
+  } finally {
+    logPerf(`middleware ${req.nextUrl.pathname}`, performance.now() - mwStart);
+  }
+}
+
+async function runMiddleware(req: NextRequest) {
   const path = req.nextUrl.pathname;
 
   if (path === "/api/auth/callback/credentials" && req.method === "POST") {
